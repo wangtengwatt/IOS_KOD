@@ -9,6 +9,7 @@ import { SuanbaoAssistantService, type SuanbaoExecutionResult } from './assistan
 import { closeSuanbaoRepository, getSuanbaoRepository } from './repositories/createSuanbaoRepository'
 import type { SuanbaoRepository } from './repositories/SuanbaoRepository'
 import { SuanbaoReminderScheduler } from './scheduler'
+import { reconcileIOSReminders, requestIOSReminderPermission } from '@/platform/mobile_plugins/notifications'
 
 export interface SuanbaoRuntimeSnapshot {
   accountKey: string
@@ -152,6 +153,9 @@ export class SuanbaoRuntime {
         if (generation !== this.generation || accountKey !== this.accountKey) return
         this.publish({ errorCode: reason instanceof Error ? reason.message : 'SUANBAO_REMINDER_RECONCILE_FAILED' })
       },
+      reconcile: async (reminders) => {
+        await reconcileIOSReminders(reminders)
+      },
     })
     const service = new SuanbaoAssistantService(repository, scheduler)
     this.service = service
@@ -213,6 +217,7 @@ export class SuanbaoRuntime {
     this.clearTerminalTimer()
     this.publish({ operation: { operationId, phase: 'running', kind } })
     try {
+      if (kind === 'reminder') await requestIOSReminderPermission()
       const result = await service.confirm(operationId)
       if (!this.isCurrent(service, generation)) return result
       this.publishTerminal({ operationId, phase: 'succeeded', kind, message: result.message })

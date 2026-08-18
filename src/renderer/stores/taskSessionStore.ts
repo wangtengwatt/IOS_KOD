@@ -10,6 +10,7 @@ import type { TaskSessionStorage } from '@/storage/TaskSessionStorage'
 import { authInfoStore } from '@/stores/authInfoStore'
 import { queryClient } from '@/stores/queryClient'
 import { safeStorage } from '@/stores/safeStorage'
+import { enqueueSyncMutation } from '@/sync/outbox'
 
 const log = getLogger('task-session-store')
 
@@ -150,6 +151,12 @@ export async function createTaskSession(params: Omit<TaskSession, 'id' | 'create
   // Invalidate paginated list cache so sidebar shows the new session
   queryClient.invalidateQueries({ queryKey: [TASK_SESSION_LIST_QUERY_KEY] })
   log.debug('Created task session:', record.id)
+  await enqueueSyncMutation({
+    entityType: 'task',
+    entityId: record.id,
+    payload: record,
+    clientUpdatedAt: record.createdAt,
+  })
   return record
 }
 
@@ -162,6 +169,13 @@ export async function updateTaskSession(id: string, updates: Partial<TaskSession
   const updated = await getStorage().update(id, { ...updates, updatedAt: Date.now() })
   if (!updated) {
     log.info('Task session not found for update:', id)
+  } else {
+    await enqueueSyncMutation({
+      entityType: 'task',
+      entityId: id,
+      payload: updated,
+      clientUpdatedAt: updated.updatedAt ?? Date.now(),
+    })
   }
   return updated
 }
@@ -179,6 +193,7 @@ export async function deleteTaskSession(id: string): Promise<void> {
   if (taskSessionStore.getState().currentTaskId === id) {
     taskSessionStore.getState().setCurrentTaskId(null)
   }
+  await enqueueSyncMutation({ entityType: 'task', entityId: id, deleted: true })
 }
 
 export function useCurrentTaskId() {

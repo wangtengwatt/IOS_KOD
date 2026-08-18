@@ -264,6 +264,9 @@ const KnowledgeBaseDocuments: React.FC<KnowledgeBaseDocumentsProps> = ({ knowled
         const correctedFiles: FileMeta[] = []
         for (const file of uploadableFiles) {
           const correctedFile = correctMimeType(file)
+          if (platform.type === 'mobile') {
+            Object.assign(correctedFile, { __blob: file })
+          }
           correctedFiles.push(correctedFile)
         }
 

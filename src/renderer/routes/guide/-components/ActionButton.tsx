@@ -2,8 +2,8 @@
  * ActionButton - Reusable button for login and provider settings actions
  */
 
-import { Box, Button, Flex, Modal, Radio, Stack, Text } from '@mantine/core'
-import { IconCirclePlus, IconExternalLink, IconId, IconInfoCircle, IconSettings } from '@tabler/icons-react'
+import { Box, Button, Flex, Stack, Text } from '@mantine/core'
+import { IconCirclePlus, IconCpu, IconExternalLink, IconInfoCircle, IconSettings } from '@tabler/icons-react'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -12,11 +12,10 @@ import { JK_EVENTS, JK_PAGE_NAMES } from '@/analytics/jk-events'
 import { ScalableIcon } from '@/components/common/ScalableIcon'
 import { navigateToSettings } from '@/modals/Settings'
 import { openLinkWithAuth } from '@/packages/openLinkWithAuth'
-import { buildChatboxUrl, getUserProfile, listLicensesByUser, type UserLicense } from '@/packages/remote'
+import { buildChatboxUrl } from '@/packages/remote'
 import { EmailCodeLoginModal } from '@/routes/settings/provider/chatbox-ai/-components/EmailCodeLoginModal'
 import type { AuthTokens } from '@/routes/settings/provider/chatbox-ai/-components/types'
 import { authInfoStore } from '@/stores/authInfoStore'
-import * as premiumActions from '@/stores/premiumActions'
 import { settingsStore, useLanguage } from '@/stores/settingsStore'
 
 interface LoginButtonProps {
@@ -32,85 +31,17 @@ const guideActionButtonWidthStyle = {
 export function LoginButton({ onLoginSuccess }: LoginButtonProps) {
   const { t } = useTranslation()
   const language = useLanguage()
-  const [showLicenseModal, setShowLicenseModal] = useState(false)
-  const [licenses, setLicenses] = useState<UserLicense[]>([])
-  const [selectedLicenseKey, setSelectedLicenseKey] = useState('')
-  const [activatingLicense, setActivatingLicense] = useState(false)
-  // Remember success state to keep showing success UI even after new messages are added
   const [hasSucceeded, setHasSucceeded] = useState(false)
   const [loginModalOpened, setLoginModalOpened] = useState(false)
 
-  const activateLicense = useCallback(
-    async (licenseKey: string) => {
-      setActivatingLicense(true)
-      try {
-        const result = await premiumActions.activate(licenseKey, 'login', { pageName: JK_PAGE_NAMES.HELP_PAGE })
-        if (result.valid) {
-          setHasSucceeded(true)
-          onLoginSuccess()
-        } else {
-          console.error('License activation failed:', result.error)
-          // Still mark as success since they logged in
-          setHasSucceeded(true)
-          onLoginSuccess()
-        }
-      } catch (error) {
-        console.error('Failed to activate license:', error)
-        setHasSucceeded(true)
-        onLoginSuccess()
-      } finally {
-        setActivatingLicense(false)
-        setShowLicenseModal(false)
-      }
+  const handleLoginSuccessInternal = useCallback(
+    async (tokens: AuthTokens) => {
+      authInfoStore.getState().setTokens(tokens)
+      setHasSucceeded(true)
+      await onLoginSuccess()
     },
     [onLoginSuccess]
   )
-
-  const handleLoginSuccessInternal = useCallback(
-    async (tokens: AuthTokens) => {
-      // Save tokens
-      authInfoStore.getState().setTokens(tokens)
-
-      // Try to get and activate licenses
-      try {
-        const [fetchedLicenses, userProfile] = await Promise.all([listLicensesByUser(), getUserProfile()])
-
-        if (fetchedLicenses.length === 1) {
-          // Auto-activate single license
-          await activateLicense(fetchedLicenses[0].key)
-        } else if (fetchedLicenses.length > 1) {
-          // Check for previously selected license
-          const lastSelected = settingsStore.getState().lastSelectedLicenseByUser?.[userProfile.email]
-          const isLastSelectedValid = lastSelected && fetchedLicenses.some((l: UserLicense) => l.key === lastSelected)
-
-          if (isLastSelectedValid) {
-            await activateLicense(lastSelected)
-          } else {
-            // Multiple licenses - show selection modal
-            setLicenses(fetchedLicenses)
-            setSelectedLicenseKey(fetchedLicenses[0].key)
-            setShowLicenseModal(true)
-          }
-        } else {
-          // No licenses but logged in - still mark as success
-          setHasSucceeded(true)
-          onLoginSuccess()
-        }
-      } catch (error) {
-        console.error('Failed to get licenses:', error)
-        // Still mark as login success even if license fetch fails
-        setHasSucceeded(true)
-        onLoginSuccess()
-      }
-    },
-    [onLoginSuccess, activateLicense]
-  )
-
-  const handleLicenseConfirm = useCallback(() => {
-    if (selectedLicenseKey) {
-      void activateLicense(selectedLicenseKey)
-    }
-  }, [selectedLicenseKey, activateLicense])
 
   const trackLoginButtonClick = useCallback(() => {
     trackJkClickEvent(JK_EVENTS.LOGIN_BUTTON_CLICK, {
@@ -132,50 +63,9 @@ export function LoginButton({ onLoginSuccess }: LoginButtonProps) {
           fullWidth
           h={42}
         >
-          {hasSucceeded ? t('Login Successful') : t('Login to Chatbox AI')}
+          {hasSucceeded ? t('Login Successful') : t('Login to KOD AI')}
         </Button>
       </Stack>
-
-      {/* License Selection Modal */}
-      <Modal
-        opened={showLicenseModal}
-        onClose={() => {}}
-        title={t('Select License')}
-        centered
-        closeOnClickOutside={false}
-        closeOnEscape={false}
-        withCloseButton={false}
-      >
-        <Stack gap="md">
-          <Text size="sm" c="chatbox-secondary">
-            {t('You have multiple licenses. Please select one to use:')}
-          </Text>
-
-          <Radio.Group value={selectedLicenseKey} onChange={setSelectedLicenseKey}>
-            <Stack gap="xs">
-              {licenses.map((license) => (
-                <Radio
-                  key={license.key}
-                  value={license.key}
-                  label={
-                    <Stack gap={2}>
-                      <Text fw={500}>{license.product_name}</Text>
-                      <Text size="xs" c="chatbox-tertiary" className="font-mono">
-                        {license.key.substring(0, 8)}
-                        {'*'.repeat(12)}
-                      </Text>
-                    </Stack>
-                  }
-                />
-              ))}
-            </Stack>
-          </Radio.Group>
-
-          <Button fullWidth onClick={handleLicenseConfirm} loading={activatingLicense} disabled={!selectedLicenseKey}>
-            {t('Confirm')}
-          </Button>
-        </Stack>
-      </Modal>
 
       <EmailCodeLoginModal
         opened={loginModalOpened}
@@ -266,13 +156,15 @@ export function NewChatTip() {
 }
 
 export function ViewLicenseButton() {
-  const { t } = useTranslation()
+  const language = useLanguage()
+  const navigate = useNavigate()
+  const label = language.startsWith('zh') ? '进入 KOD 算力中心' : 'Open KOD Compute Center'
 
   return (
     <Flex mt="xs" style={guideActionButtonWidthStyle}>
-      <Button variant="light" fullWidth h={42} onClick={() => navigateToSettings('chatbox-ai')}>
-        <ScalableIcon icon={IconId} className="mr-2" />
-        {t('View License Details')}
+      <Button variant="light" fullWidth h={42} onClick={() => navigate({ to: '/compute-center' })}>
+        <ScalableIcon icon={IconCpu} className="mr-2" />
+        {label}
       </Button>
     </Flex>
   )

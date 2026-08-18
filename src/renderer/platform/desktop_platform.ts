@@ -1,6 +1,8 @@
 /** biome-ignore-all lint/suspicious/noExplicitAny: <any> */
 
 import type { ElectronIPC } from '@shared/electron-types'
+import type { KaiIdentityConfig, KaiIdentityLoginResult } from '@shared/kai-identity'
+import { KaiIdentityIpcChannels } from '@shared/kai-identity'
 import type { Config, Settings, ShortcutSetting } from '@shared/types'
 import { cache } from '@shared/utils/cache'
 import localforage from 'localforage'
@@ -105,6 +107,16 @@ export default class DesktopPlatform implements Platform {
     const { KOD_API_ORIGIN, KOD_PAYMENT_HOSTS } = await import('@/variables')
     assertPaymentUrl(url, parsePaymentHosts(KOD_PAYMENT_HOSTS, KOD_API_ORIGIN))
     return this.ipc.openPaymentUrl(url)
+  }
+  public supportsKaiIdentityLogin(): boolean {
+    return true
+  }
+  public async loginWithKaiIdentity(config: KaiIdentityConfig): Promise<KaiIdentityLoginResult> {
+    const resultJson = await this.ipc.invoke(KaiIdentityIpcChannels.LOGIN, JSON.stringify(config))
+    return JSON.parse(resultJson) as KaiIdentityLoginResult
+  }
+  public async cancelKaiIdentityLogin(): Promise<void> {
+    await this.ipc.invoke(KaiIdentityIpcChannels.CANCEL)
   }
   public async getDeviceName(): Promise<string> {
     const deviceName = await cache('ipc:getDeviceName', () => this.ipc.invoke('getDeviceName'), {

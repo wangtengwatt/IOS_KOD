@@ -129,7 +129,8 @@ export const LoggedInView = forwardRef<HTMLDivElement, LoggedInViewProps>(({ onL
             </Alert>
           )}
           <PasswordInput
-            label={t('Current password')}
+            label={t('Current password (KOD email accounts only)')}
+            description={t('Leave this blank if you signed in only through KAI unified identity.')}
             value={password}
             onChange={(e) => setPassword(e.currentTarget.value)}
             autoComplete="current-password"

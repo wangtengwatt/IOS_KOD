@@ -1,12 +1,28 @@
 import { isFirstDay } from '../hooks/useVersion'
 import { initSettingsStore } from '../stores/settingsStore'
 import platform from '../platform'
+
+function loadPlausible(): Promise<void> {
+  if (document.querySelector('script[data-kod-telemetry="plausible"]')) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.defer = true
+    script.dataset.kodTelemetry = 'plausible'
+    script.dataset.domain = 'app.chatboxai.app'
+    script.src = 'https://plausible.midway.run/js/script.local.hash.js'
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Unable to load analytics'))
+    document.head.appendChild(script)
+  })
+}
+
 ;(async () => {
   try {
     const settings = await initSettingsStore()
     if (!settings.allowReportingAndTracking) {
       return
     }
+    await loadPlausible()
 
     const version = await platform.getVersion().catch(() => 'unknown')
     const is_first_day = isFirstDay()

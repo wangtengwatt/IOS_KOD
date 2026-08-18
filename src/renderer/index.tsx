@@ -33,24 +33,27 @@ import './setup/api_origin_init'
 
 // KOD opt: Skip analytics and Sentry in dev to save ~100MB memory
 const isDev = process.env.NODE_ENV === 'development'
+// The inherited Chatbox telemetry destinations are not KOD-controlled processors.
+// Keep them completely absent from the App Store binary until KOD deploys and discloses its own endpoints.
+const enableInheritedTelemetry = !isDev && CHATBOX_BUILD_PLATFORM !== 'ios'
 
 // Sentry 初始化（仅生产环境）
-if (!isDev) {
+if (enableInheritedTelemetry) {
   import('./setup/sentry_init')
 }
 
 // GA4 初始化（仅生产环境）
-if (!isDev) {
+if (enableInheritedTelemetry) {
   import('./setup/ga_init')
 }
 
 // Plausible 初始化（仅生产环境）
-if (!isDev) {
+if (enableInheritedTelemetry) {
   import('./setup/plausible_init')
 }
 
 // jk analytics 初始化（仅生产环境）
-if (!isDev) {
+if (enableInheritedTelemetry) {
   import('./setup/jk_analytics_init')
 }
 
@@ -64,6 +67,8 @@ import { initLoginLicenseStateReconciliation } from './stores/premiumActions'
 import { initRecentDirectoriesStore } from './stores/recentDirectoriesStore'
 import { initSettingsStore } from './stores/settingsStore'
 import { initUpdateListeners } from './stores/updateStore'
+import { initCrossDeviceSync } from './sync/engine'
+import { initStoreKitReconciliation } from './packages/storekit'
 
 // 开发环境下引入错误测试工具
 // if (process.env.NODE_ENV === 'development') {
@@ -168,6 +173,8 @@ initializeApp()
 
     i18n.changeLanguage(settings.language)
     initLoginLicenseStateReconciliation()
+    initCrossDeviceSync()
+    initStoreKitReconciliation()
 
     // Initialize auto-updater event listeners (desktop only, idempotent)
     if (platform.type === 'desktop') {

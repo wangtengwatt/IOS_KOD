@@ -7,6 +7,7 @@ import { Box, Stack, Text, UnstyledButton } from '@mantine/core'
 import { IconSparkles } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { ScalableIcon } from '@/components/common/ScalableIcon'
+import { brandGuideText } from '../-utils/guideBrand'
 
 interface SuggestedQuestionsProps {
   onQuestionClick: (question: string) => void
@@ -17,9 +18,9 @@ export function SuggestedQuestions({ onQuestionClick, disabled }: SuggestedQuest
   const { t } = useTranslation()
 
   const questions = [
-    t('I want to try Chatbox for free!'),
+    brandGuideText(String(t('I want to try Chatbox for free!'))),
     t('What is an API? Where to get it? How to connect?'),
-    t('What is the relationship between Chatbox and other model providers?'),
+    brandGuideText(String(t('What is the relationship between Chatbox and other model providers?'))),
     t('How do I switch to different models, like DeepSeek?'),
     t('Where is the Knowledge Base feature?'),
   ]

@@ -9,6 +9,7 @@
 
 import * as defaults from '@shared/defaults'
 import type { Config, Language, Settings, ShortcutSetting } from '@shared/types'
+import type { KaiIdentityConfig, KaiIdentityLoginResult } from '@shared/kai-identity'
 import { v4 as uuidv4 } from 'uuid'
 import { type ImageGenerationStorage, IndexedDBImageGenerationStorage } from '@/storage/ImageGenerationStorage'
 import { IndexedDBSessionMetaStorage, type SessionMetaStorage } from '@/storage/SessionMetaStorage'
@@ -220,6 +221,13 @@ export default class TestPlatform implements Platform {
   public async openPaymentUrl(url: string): Promise<void> {
     throw new Error('安全支付链接仅支持桌面客户端')
   }
+  public supportsKaiIdentityLogin(): boolean {
+    return false
+  }
+  public async loginWithKaiIdentity(_config: KaiIdentityConfig): Promise<KaiIdentityLoginResult> {
+    return { success: false, error: 'KAI Identity is not available in tests' }
+  }
+  public async cancelKaiIdentityLogin(): Promise<void> {}
 
   public async openLink(url: string): Promise<void> {
     // no-op in test

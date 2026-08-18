@@ -5,7 +5,7 @@ import {
   isComputeUploadSizeExceeded,
   prepareComputeImageUpload,
 } from '@/packages/computeImageUpload'
-import { getKodApiOrigin } from '@/packages/remote'
+import { getKodApiOrigin, refreshKodSession } from '@/packages/remote'
 import { authInfoStore } from '@/stores/authInfoStore'
 
 export type ProductType = 'API' | 'GPU'
@@ -591,18 +591,32 @@ export class ComputeCenterApiError extends Error {
 }
 
 async function request<T>(path: string, options?: FetchOptions<'json'>, authenticated = true): Promise<T> {
-  const token = authInfoStore.getState().accessToken
+  let token = authInfoStore.getState().accessToken
   if (authenticated && !token) {
-    throw new Error('请先登录 KOD 账号')
+    throw new ComputeCenterApiError(401, '请先登录 KOD 账号')
   }
-  const json = await ofetch<KodResult<T>>(`${getKodApiOrigin()}${path}`, {
-    ...options,
-    headers: {
-      ...(options?.headers || {}),
-      ...(authenticated && token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    ignoreResponseError: true,
-  })
+
+  const execute = (accessToken: string | null) =>
+    ofetch<KodResult<T>>(`${getKodApiOrigin()}${path}`, {
+      ...options,
+      headers: {
+        ...(options?.headers || {}),
+        ...(authenticated && accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      ignoreResponseError: true,
+    })
+
+  let json = await execute(token)
+  if (authenticated && json.code === 401) {
+    try {
+      const refreshed = await refreshKodSession()
+      token = refreshed.accessToken
+      json = await execute(token)
+    } catch {
+      throw new ComputeCenterApiError(401, '登录状态已失效，请重新登录 KOD')
+    }
+    if (json.code === 401) authInfoStore.getState().clearTokens()
+  }
   if (json.code !== 0) {
     throw new ComputeCenterApiError(json.code, json.message || '算力中心请求失败', json.data)
   }

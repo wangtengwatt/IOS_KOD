@@ -1,0 +1,18 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAM_ID.com.kai.kod"],
+        "components": [
+          {
+            "/": "/auth/ios/callback",
+            "comment": "KAI Identity OIDC callback for KOD iOS"
+          }
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": ["TEAM_ID.com.kai.kod"]
+  }
+}

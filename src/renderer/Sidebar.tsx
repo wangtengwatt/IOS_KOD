@@ -28,7 +28,9 @@ import { useIsSmallScreen, useSidebarWidth } from './hooks/useScreenChange'
 import useVersion from './hooks/useVersion'
 import { navigateToSettings } from './modals/Settings'
 import { trackingEvent } from './packages/event'
+import { rememberKodAuthReturnTo } from './packages/kodAuthReturn'
 import icon from './static/icon.png'
+import { authInfoStore } from './stores/authInfoStore'
 import { settingsStore, useLanguage } from './stores/settingsStore'
 import { taskSessionStore } from './stores/taskSessionStore'
 import { useUIStore } from './stores/uiStore'
@@ -95,6 +97,18 @@ export default function Sidebar() {
     }
     trackingEvent('create_new_task', { event_category: 'user' })
   }, [isSmallScreen, setShowSidebar, navigate])
+
+  const handleOpenComputeCenter = useCallback(() => {
+    if (authInfoStore.getState().accessToken) {
+      navigate({ to: '/compute-center' })
+    } else {
+      rememberKodAuthReturnTo('/compute-center')
+      navigateToSettings('/chatbox-ai')
+    }
+    if (isSmallScreen) {
+      setShowSidebar(false)
+    }
+  }, [isSmallScreen, navigate, setShowSidebar])
 
   const handleResizeStart = useCallback(
     (e: React.MouseEvent) => {
@@ -232,6 +246,10 @@ export default function Sidebar() {
         <Stack gap={0} px="xs" pb="xs">
           <Divider />
           <Stack gap="xs" pt="xs" mb="xs">
+            <Button variant="light" fullWidth data-testid="compute-center-button" onClick={handleOpenComputeCenter}>
+              <ScalableIcon icon={IconCpu} className="mr-2" />
+              算力中心
+            </Button>
             {sidebarMode === 'task' && featureFlags.taskMode ? (
               <Button variant="light" fullWidth onClick={handleCreateNewTask}>
                 <ScalableIcon icon={IconCirclePlus} className="mr-2" />
@@ -281,19 +299,6 @@ export default function Sidebar() {
                 variant="transparent"
                 color="chatbox-secondary"
                 size={24}
-                aria-label="算力中心"
-                onClick={() => {
-                  navigate({ to: '/compute-center' })
-                  setShowSidebar(false)
-                }}
-              >
-                <ScalableIcon icon={IconCpu} size={20} />
-              </ActionIcon>
-
-              <ActionIcon
-                variant="transparent"
-                color="chatbox-secondary"
-                size={24}
                 onClick={() => {
                   navigateToSettings()
                   setShowSidebar(false)
@@ -319,15 +324,6 @@ export default function Sidebar() {
                     setShowSidebar(false)
                   }
                 }}
-                variant="light"
-                p="xs"
-              />
-              <NavLink
-                c="chatbox-secondary"
-                className="rounded"
-                label="算力中心"
-                leftSection={<ScalableIcon icon={IconCpu} size={20} />}
-                onClick={() => navigate({ to: '/compute-center' })}
                 variant="light"
                 p="xs"
               />

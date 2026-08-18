@@ -11,6 +11,9 @@ type MCPClient = Awaited<ReturnType<typeof createMCPClient>>
 
 async function createClient(transportConfig: TransportConfig, name = 'chatbox-mcp-client'): Promise<MCPClient> {
   if (transportConfig.type === 'stdio') {
+    if (typeof window === 'undefined' || !window.electronAPI) {
+      throw new Error('iOS 暂仅支持远程 HTTP/SSE MCP；本地 stdio MCP 需要尚未接通的托管云端运行器')
+    }
     const transport = await IPCStdioTransport.create(transportConfig)
     let errorMessage = ''
     try {

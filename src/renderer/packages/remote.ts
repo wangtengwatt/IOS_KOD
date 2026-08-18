@@ -5,6 +5,7 @@ import platform from '@/platform'
 import { authInfoStore } from '@/stores/authInfoStore'
 import {
   CHATBOX_BUILD_CHANNEL,
+  CHATBOX_BUILD_PLATFORM,
   KOD_API_ORIGIN,
   NODE_ENV,
   USE_BETA_API,
@@ -60,6 +61,33 @@ async function getAfetch() {
 
 let _authenticatedAfetch: ReturnType<typeof createAuthenticatedAfetch> | null = null
 let authenticatedAfetchPromise: Promise<ReturnType<typeof createAuthenticatedAfetch>> | null = null
+let kodSessionRefreshPromise: Promise<{ accessToken: string; refreshToken: string }> | null = null
+
+export async function refreshKodSession(refreshToken?: string) {
+  if (!kodSessionRefreshPromise) {
+    const token = refreshToken || authInfoStore.getState().refreshToken
+    if (!token) {
+      authInfoStore.getState().clearTokens()
+      throw new Error('No KOD refresh token available')
+    }
+    kodSessionRefreshPromise = refreshAccessToken({ refreshToken: token })
+      .then((tokens) => {
+        authInfoStore.getState().setTokens(tokens, { preserveEmail: true })
+        return tokens
+      })
+      .catch((error) => {
+        authInfoStore.getState().clearTokens()
+        throw error
+      })
+  }
+
+  const pendingRefresh = kodSessionRefreshPromise
+  try {
+    return await pendingRefresh
+  } finally {
+    if (kodSessionRefreshPromise === pendingRefresh) kodSessionRefreshPromise = null
+  }
+}
 
 async function initAuthenticatedAfetch(): Promise<ReturnType<typeof createAuthenticatedAfetch>> {
   if (authenticatedAfetchPromise) return authenticatedAfetchPromise
@@ -77,9 +105,7 @@ async function initAuthenticatedAfetch(): Promise<ReturnType<typeof createAuthen
         return tokens
       },
       refreshTokens: async (refreshToken: string) => {
-        const result = await refreshAccessToken({ refreshToken })
-        authInfoStore.getState().setTokens(result, { preserveEmail: true })
-        return result
+        return refreshKodSession(refreshToken)
       },
       clearTokens: async () => {
         authInfoStore.getState().clearTokens()
@@ -127,6 +153,18 @@ export function getChatboxOrigin() {
 
 export function getKodApiOrigin() {
   return USE_LOCAL_API || NODE_ENV === 'development' ? 'http://localhost:8080' : KOD_API_ORIGIN
+}
+
+export const KOD_AUTH_REQUEST_TIMEOUT_MS = 12_000
+
+function throwReadableKodAuthError(error: unknown): never {
+  if (error instanceof Error) {
+    const detail = `${error.name} ${error.message}`
+    if (/abort|timeout|timed out|failed to fetch|fetch failed|network error/i.test(detail)) {
+      throw new Error('登录服务连接超时，请确认本机后端已启动且数据库网络可用后重试')
+    }
+  }
+  throw error
 }
 
 export function buildChatboxUrl(path: string) {
@@ -189,24 +227,32 @@ export async function loginWithKod(params: {
   inviteCode?: string
   emailCode?: string
 }) {
-  const json = await ofetch(`${getKodApiOrigin()}/api/auth/login`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: {
-      email: params.email,
-      password: params.password,
-      ...(params.inviteCode ? { inviteCode: params.inviteCode } : {}),
-      ...(params.emailCode ? { emailCode: params.emailCode } : {}),
-    },
-    ignoreResponseError: true,
-  })
+  let json: unknown
+  try {
+    json = await ofetch(`${getKodApiOrigin()}/api/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: {
+        email: params.email,
+        password: params.password,
+        ...(params.inviteCode ? { inviteCode: params.inviteCode } : {}),
+        ...(params.emailCode ? { emailCode: params.emailCode } : {}),
+      },
+      ignoreResponseError: true,
+      retry: 0,
+      timeout: KOD_AUTH_REQUEST_TIMEOUT_MS,
+    })
+  } catch (error) {
+    throwReadableKodAuthError(error)
+  }
 
   const data = unwrapKodResult(
     KodResultSchema(
       z.object({
         token: z.string(),
+        refreshToken: z.string().optional(),
         newUser: z.boolean(),
       })
     ).parse(json)
@@ -214,13 +260,15 @@ export async function loginWithKod(params: {
 
   return {
     accessToken: data.token,
-    refreshToken: data.token,
+    refreshToken: data.refreshToken || data.token,
     newUser: data.newUser,
   }
 }
 
 export async function getKaiIdentityConfig() {
+  const client = platform.type === 'mobile' && CHATBOX_BUILD_PLATFORM === 'ios' ? 'ios' : 'desktop'
   const json = await ofetch(`${getKodApiOrigin()}/api/auth/kai/config`, {
+    query: { client },
     ignoreResponseError: true,
   })
   return unwrapKodResult(
@@ -249,6 +297,7 @@ export async function loginWithKaiIdentity(accessToken: string) {
     KodResultSchema(
       z.object({
         token: z.string(),
+        refreshToken: z.string().optional(),
         newUser: z.boolean(),
         email: z.string().email(),
       })
@@ -256,7 +305,7 @@ export async function loginWithKaiIdentity(accessToken: string) {
   )
   return {
     accessToken: data.token,
-    refreshToken: data.token,
+    refreshToken: data.refreshToken || data.token,
     newUser: data.newUser,
     email: data.email,
   }
@@ -1103,43 +1152,26 @@ export async function checkLoginStatus(ticketId: string) {
 }
 
 export async function refreshAccessToken(params: { refreshToken: string }) {
-  type Response = {
-    data: {
-      result: string
-    }
-  }
-  const afetch = await getAfetch()
-  const res = await afetch(
-    `${getChatboxOrigin()}/api/auth/token_refresh`,
-    {
-      method: 'POST',
-      headers: {
-        'x-kod-refresh-token': params.refreshToken,
-        ...(await getChatboxHeaders()),
-      },
-    },
-    {
-      parseChatboxRemoteError: true,
-      retry: 2,
-    }
+  const json = await ofetch(`${getKodApiOrigin()}/api/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: { refreshToken: params.refreshToken },
+    ignoreResponseError: true,
+    retry: 0,
+    timeout: KOD_AUTH_REQUEST_TIMEOUT_MS,
+  })
+  const data = unwrapKodResult(
+    KodResultSchema(
+      z.object({
+        token: z.string(),
+        refreshToken: z.string(),
+      })
+    ).parse(json)
   )
-  const json: Response = await res.json()
-  // log.info('✅ refreshAccessToken response', json)
-
-  const accessToken = res.headers.get('x-kod-access-token')
-  const refreshToken = res.headers.get('x-kod-refresh-token')
-
-  if (!accessToken || !refreshToken) {
-    log.error('❌ Missing tokens in response headers:', {
-      accessToken: accessToken ? 'present' : 'missing',
-      refreshToken: refreshToken ? 'present' : 'missing',
-    })
-    throw new Error('Failed to refresh token: missing tokens in response headers')
-  }
 
   return {
-    accessToken,
-    refreshToken,
+    accessToken: data.token,
+    refreshToken: data.refreshToken,
   }
 }
 

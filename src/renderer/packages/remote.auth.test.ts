@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getKaiIdentityConfig, loginWithKaiIdentity, loginWithKod, sendKodEmailCode } from './remote'
+import {
+  getKaiIdentityConfig,
+  KOD_AUTH_REQUEST_TIMEOUT_MS,
+  loginWithKaiIdentity,
+  loginWithKod,
+  sendKodEmailCode,
+} from './remote'
 
 const KOD_ORIGIN = 'https://kod.kai.com'
 
@@ -71,6 +77,29 @@ describe('loginWithKod', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ code: 0, message: 'no data' })))
     await expect(loginWithKod({ email: 'a@b.com', password: 'pw' })).rejects.toThrow()
   })
+
+  it('aborts a stalled login request and reports a readable connection error', async () => {
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('The operation was aborted', 'AbortError'))
+        )
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    vi.useFakeTimers()
+    try {
+      const loginPromise = loginWithKod({ email: 'a@b.com', password: 'pw' })
+      const assertion = expect(loginPromise).rejects.toThrow(
+        '登录服务连接超时，请确认本机后端已启动且数据库网络可用后重试'
+      )
+      await vi.advanceTimersByTimeAsync(KOD_AUTH_REQUEST_TIMEOUT_MS)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('sendKodEmailCode', () => {
@@ -117,7 +146,7 @@ describe('KAI Identity login', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(getKaiIdentityConfig()).resolves.toEqual(config)
-    expect(fetchMock.mock.calls[0][0]).toBe(`${KOD_ORIGIN}/api/auth/kai/config`)
+    expect(fetchMock.mock.calls[0][0]).toBe(`${KOD_ORIGIN}/api/auth/kai/config?client=desktop`)
   })
 
   it('exchanges the Identity access token for a normal KOD session', async () => {

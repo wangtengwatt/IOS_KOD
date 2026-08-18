@@ -36,14 +36,15 @@ import { useTranslation } from 'react-i18next'
 import Divider from '@/components/common/Divider'
 import { ScalableIcon } from '@/components/common/ScalableIcon'
 import Disclaimer from '@/components/Disclaimer'
-import ProviderImageIcon from '@/components/icons/ProviderImageIcon'
 import useNeedRoomForWinControls from '@/hooks/useNeedRoomForWinControls'
 import { useIsSmallScreen } from '@/hooks/useScreenChange'
 import { languageNameMap, languages } from '@/i18n/locales'
+import iconKod from '@/static/icon-kod.png'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useUIStore } from '@/stores/uiStore'
 import { GuideMessage } from './-components/GuideMessage'
 import { useGuideSession } from './-hooks/useGuideSession'
+import { brandGuideText } from './-utils/guideBrand'
 
 export const Route = createFileRoute('/guide/')({
   component: GuidePage,
@@ -255,7 +256,7 @@ function GuidePage() {
 
         <Flex align="center" gap="xxs" flex={1} {...(isSmallScreen ? { justify: 'center', pl: 28, pr: 8 } : {})}>
           <Title order={4} fz={!isSmallScreen ? 20 : undefined} lineClamp={1}>
-            {t('Getting Started')}
+            {currentLanguage.startsWith('zh') ? 'KOD 新手引导' : 'KOD Getting Started'}
           </Title>
         </Flex>
 
@@ -354,7 +355,9 @@ function GuidePage() {
                   canSendMessage
                     ? t('Type your question here...') || ''
                     : hasValidConfig
-                      ? t('Chatbox is ready. To save resources, please start a new chat to continue.') || ''
+                      ? brandGuideText(
+                          String(t('Chatbox is ready. To save resources, please start a new chat to continue.'))
+                        )
                       : t('Please complete setup to continue chatting') || ''
                 }
                 disabled={!canSendMessage || isLoading}
@@ -393,9 +396,9 @@ function GuidePage() {
               <Menu position="top-end" shadow="md" transitionProps={{ transition: 'fade-up', duration: 200 }}>
                 <Menu.Target>
                   <UnstyledButton className="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-[var(--chatbox-background-tertiary)] transition-colors">
-                    <ProviderImageIcon provider="chatbox-ai" size={18} />
+                    <img src={iconKod} alt="KOD" className="w-[18px] h-[18px] rounded" />
                     <Text size="sm" className="text-[var(--chatbox-tint-secondary)]">
-                      Chatbox Guide
+                      KOD 新手助手
                     </Text>
                     <ScalableIcon
                       icon={IconChevronRight}
@@ -406,10 +409,10 @@ function GuidePage() {
                 </Menu.Target>
                 <Menu.Dropdown>
                   <Menu.Item
-                    leftSection={<ProviderImageIcon provider="chatbox-ai" size={16} />}
+                    leftSection={<img src={iconKod} alt="KOD" className="w-4 h-4 rounded" />}
                     rightSection={<ScalableIcon icon={IconCheck} size={14} className="text-chatbox-tint-brand" />}
                   >
-                    Chatbox Guide
+                    KOD 新手助手
                   </Menu.Item>
                 </Menu.Dropdown>
               </Menu>

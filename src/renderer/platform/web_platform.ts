@@ -1,5 +1,6 @@
 ﻿import * as defaults from '@shared/defaults'
 import type { Config, Settings, ShortcutSetting } from '@shared/types'
+import type { KaiIdentityConfig, KaiIdentityLoginResult } from '@shared/kai-identity'
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
 import { parseLocale } from '@/i18n/parser'
@@ -63,6 +64,13 @@ export default class WebPlatform extends IndexedDBStorage implements Platform {
   public async openPaymentUrl(url: string): Promise<void> {
     throw new Error('安全支付链接仅支持桌面客户端')
   }
+  public supportsKaiIdentityLogin(): boolean {
+    return false
+  }
+  public async loginWithKaiIdentity(_config: KaiIdentityConfig): Promise<KaiIdentityLoginResult> {
+    return { success: false, error: 'KAI 统一登录不支持网页内嵌客户端' }
+  }
+  public async cancelKaiIdentityLogin(): Promise<void> {}
 
   public async openLink(url: string): Promise<void> {
     window.open(url)

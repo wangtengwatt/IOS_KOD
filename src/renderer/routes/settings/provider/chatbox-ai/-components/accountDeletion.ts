@@ -14,8 +14,10 @@ import { purgeTaskSessionData, resetTaskSessionStorage } from '@/stores/taskSess
 
 export const ACCOUNT_DELETE_CONFIRMATION = 'DELETE'
 
-export function canDeleteAccount(password: string, confirmation: string, acknowledged: boolean): boolean {
-  return password.length > 0 && confirmation === ACCOUNT_DELETE_CONFIRMATION && acknowledged
+export function canDeleteAccount(_password: string, confirmation: string, acknowledged: boolean): boolean {
+  // Password accounts are re-authenticated by the server. KAI-only accounts
+  // have no user-known KOD password, so confirmation must also work without it.
+  return confirmation === ACCOUNT_DELETE_CONFIRMATION && acknowledged
 }
 
 export class AccountDeletedWithCleanupError extends Error {

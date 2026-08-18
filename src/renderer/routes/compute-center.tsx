@@ -27,6 +27,7 @@ import {
 } from '@mantine/core'
 import {
   IconBell,
+  IconBrandApple,
   IconBuildingStore,
   IconCopy,
   IconCpu,
@@ -47,6 +48,7 @@ import { z } from 'zod'
 import { CardHourAdminPanel, CardHourBusiness, CardHourMarketplace } from '@/components/compute/CardHourBusiness'
 import Page from '@/components/layout/Page'
 import { useIsSmallScreen } from '@/hooks/useScreenChange'
+import { navigateToSettings } from '@/modals/Settings'
 import {
   acceptComputeTransfer,
   activateComputeApi,
@@ -138,9 +140,12 @@ import {
   withdrawComputeCardHours,
 } from '@/packages/computeCenter'
 import { addHoursToLocalDateTime, resolvePackageDurationHours } from '@/packages/computeDeliveryTime'
+import { rememberKodAuthReturnTo } from '@/packages/kodAuthReturn'
 import { copyToClipboard } from '@/packages/navigator'
+import { listStoreProducts, purchaseStoreProduct, restoreStorePurchases } from '@/packages/storekit'
 import platform from '@/platform'
 import { useAuthInfoStore } from '@/stores/authInfoStore'
+import { CHATBOX_BUILD_PLATFORM } from '@/variables'
 
 const computeSearchSchema = z.object({
   invite: z.string().max(64).optional(),
@@ -186,11 +191,18 @@ function ComputeCenterPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const isLoggedIn = useAuthInfoStore((state) => Boolean(state.accessToken))
-  const [activeTab, setActiveTab] = useState('market')
+  const isIOSStore = platform.type === 'mobile' && CHATBOX_BUILD_PLATFORM === 'ios'
+  const [activeTab, setActiveTab] = useState(isIOSStore ? 'app-store' : 'market')
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<FeedbackMessage | null>(null)
   const [cardHourPrompt, setCardHourPrompt] = useState<CardHourPrompt | null>(null)
+  const wasLoggedIn = useRef(isLoggedIn)
   const closeMessage = useCallback(() => setMessage(null), [])
+
+  const openKodLogin = useCallback(() => {
+    rememberKodAuthReturnTo('/compute-center')
+    navigateToSettings('/chatbox-ai')
+  }, [])
 
   const configQuery = useQuery({ queryKey: ['compute', 'config'], queryFn: getComputeConfig })
   const productsQuery = useQuery({ queryKey: ['compute', 'products'], queryFn: () => listComputeProducts() })
@@ -209,6 +221,11 @@ function ComputeCenterPage() {
   useEffect(() => {
     if (isLoggedIn && search.invite) setActiveTab('account')
   }, [isLoggedIn, search.invite])
+
+  useEffect(() => {
+    if (wasLoggedIn.current && !isLoggedIn) openKodLogin()
+    wasLoggedIn.current = isLoggedIn
+  }, [isLoggedIn, openKodLogin])
 
   useEffect(() => {
     if (!isLoggedIn) return
@@ -288,6 +305,7 @@ function ComputeCenterPage() {
 
   const account = accountQuery.data
   const tabs = [
+    { value: 'app-store', label: 'Apple 购买', icon: <IconBrandApple size={16} />, login: true },
     { value: 'market', label: '算力市场', icon: <IconBuildingStore size={16} /> },
     { value: 'card-hours', label: '卡时资产', icon: <IconDatabaseDollar size={16} /> },
     { value: 'account', label: '我的资产', icon: <IconWallet size={16} />, login: true },
@@ -301,19 +319,26 @@ function ComputeCenterPage() {
     <Page title="KOD 算力中心">
       <Container size="xl" py={isSmallScreen ? 'sm' : 'md'} px={isSmallScreen ? 'xs' : 'md'}>
         <Stack gap="md">
-          <Hero
-            account={account}
-            rate={configQuery.data?.cardHourCnyRate}
-            onOpen={setActiveTab}
-            refreshing={accountQuery.isFetching}
-            onRefresh={() => void accountQuery.refetch()}
-          />
+          {isIOSStore ? (
+            <Alert color="blue" title="通过 Apple App Store 购买数字权益">
+              iPhone 和 iPad 版不提供网页充值或外部支付入口。订阅与算力点数由 StoreKit 2
+              完成购买，并在服务端验签后计入你的 KAI 账户。
+            </Alert>
+          ) : (
+            <Hero
+              account={account}
+              rate={configQuery.data?.cardHourCnyRate}
+              onOpen={setActiveTab}
+              refreshing={accountQuery.isFetching}
+              onRefresh={() => void accountQuery.refetch()}
+            />
+          )}
 
           {!isLoggedIn && (
             <Alert color="blue" title="公开浏览模式">
               <Flex align="center" justify="space-between" gap="md" wrap="wrap">
                 <Text size="sm">你可以浏览商品；购买卡时、购买套餐、转让和资源商操作需要登录。</Text>
-                <Button size="xs" onClick={() => navigate({ to: '/settings/provider/chatbox-ai' })}>
+                <Button size="xs" onClick={openKodLogin}>
                   登录 KOD
                 </Button>
               </Flex>
@@ -348,7 +373,10 @@ function ComputeCenterPage() {
             <ScrollArea type="never" offsetScrollbars>
               <Tabs.List style={{ flexWrap: 'nowrap' }}>
                 {tabs
-                  .filter((tab) => !tab.login || isLoggedIn)
+                  .filter(
+                    (tab) =>
+                      (!isIOSStore || ['app-store', 'purchases'].includes(tab.value)) && (!tab.login || isLoggedIn)
+                  )
                   .map((tab) => (
                     <Tabs.Tab key={tab.value} value={tab.value} leftSection={tab.icon}>
                       {tab.label}
@@ -404,6 +432,12 @@ function ComputeCenterPage() {
               />
             </Tabs.Panel>
 
+            {isLoggedIn && isIOSStore && (
+              <Tabs.Panel value="app-store" pt="md">
+                <AppStoreProductsPanel />
+              </Tabs.Panel>
+            )}
+
             {isLoggedIn && (
               <>
                 <Tabs.Panel value="account" pt="md">
@@ -432,6 +466,109 @@ function ComputeCenterPage() {
         </Stack>
       </Container>
     </Page>
+  )
+}
+
+function AppStoreProductsPanel() {
+  const queryClient = useQueryClient()
+  const storeQuery = useQuery({ queryKey: ['storekit', 'catalog'], queryFn: listStoreProducts, retry: false })
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<FeedbackMessage | null>(null)
+
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['storekit'] })
+    await storeQuery.refetch()
+  }
+
+  const purchase = async (productId: string) => {
+    setBusy(productId)
+    setMessage(null)
+    try {
+      const result = await purchaseStoreProduct(productId)
+      if (result.status === 'cancelled') setMessage({ color: 'red', text: '购买已取消' })
+      else if (result.status === 'pending') setMessage({ color: 'green', text: '购买等待 Apple 或家长批准' })
+      else setMessage({ color: 'green', text: '购买已验证并计入 KAI 账户' })
+      await refresh()
+    } catch (error) {
+      setMessage({ color: 'red', text: error instanceof Error ? error.message : 'StoreKit 购买失败' })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const restore = async () => {
+    setBusy('restore')
+    setMessage(null)
+    try {
+      await restoreStorePurchases()
+      setMessage({ color: 'green', text: '已恢复并核对 Apple 购买记录' })
+      await refresh()
+    } catch (error) {
+      setMessage({ color: 'red', text: error instanceof Error ? error.message : '恢复购买失败' })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (storeQuery.isLoading) return <Text c="dimmed">正在从 App Store 加载商品…</Text>
+  if (storeQuery.error) {
+    return (
+      <Alert color="red" title="Apple 购买暂不可用">
+        {storeQuery.error instanceof Error ? storeQuery.error.message : 'StoreKit 商品加载失败'}
+      </Alert>
+    )
+  }
+
+  const account = storeQuery.data?.account
+  const products = storeQuery.data?.products || []
+  return (
+    <Stack gap="md">
+      <FeedbackToast message={message} onClose={() => setMessage(null)} />
+      <Group justify="space-between" align="center">
+        <div>
+          <Title order={3}>数字权益</Title>
+          <Text size="sm" c="dimmed">
+            可用点数：{account?.creditBalance ?? 0} · 有效订阅：{account?.activeSubscriptions.length ?? 0}
+          </Text>
+        </div>
+        <Button variant="light" leftSection={<IconRefresh size={16} />} loading={busy === 'restore'} onClick={restore}>
+          恢复购买
+        </Button>
+      </Group>
+      {products.length === 0 ? (
+        <Alert color="yellow" title="尚未配置 App Store 商品">
+          请先在 App Store Connect 创建订阅和消耗型商品，并将相同 Product ID 加入服务端白名单。
+        </Alert>
+      ) : (
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          {products.map((product) => (
+            <Card key={product.id} withBorder radius="md" padding="lg">
+              <Stack gap="sm">
+                <div>
+                  <Text fw={700}>{product.displayName}</Text>
+                  <Text size="sm" c="dimmed">
+                    {product.description}
+                  </Text>
+                </div>
+                <Group justify="space-between">
+                  <Text fw={700}>{product.displayPrice}</Text>
+                  <Button
+                    loading={busy === product.id}
+                    disabled={busy !== null}
+                    onClick={() => void purchase(product.id)}
+                  >
+                    购买
+                  </Button>
+                </Group>
+              </Stack>
+            </Card>
+          ))}
+        </SimpleGrid>
+      )}
+      <Text size="xs" c="dimmed">
+        付款由 Apple 处理。订阅可在系统“设置 → Apple 账户 → 订阅”中管理；点数到账以服务端验证 Apple 签名交易为准。
+      </Text>
+    </Stack>
   )
 }
 

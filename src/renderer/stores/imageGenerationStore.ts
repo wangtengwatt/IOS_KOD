@@ -8,6 +8,7 @@ import blobStorage from '@/storage'
 import { deriveAccountKey } from '@/storage/accountKey'
 import type { ImageGenerationStorage } from '@/storage/ImageGenerationStorage'
 import { authInfoStore } from '@/stores/authInfoStore'
+import { enqueueSyncMutation } from '@/sync/outbox'
 
 const log = getLogger('image-generation-store')
 
@@ -148,6 +149,12 @@ export async function createRecord(
   }
   await getStorage().create(record)
   log.debug('Created image generation record:', record.id)
+  await enqueueSyncMutation({
+    entityType: 'image_generation',
+    entityId: record.id,
+    payload: record,
+    clientUpdatedAt: record.createdAt,
+  })
   return record
 }
 
@@ -155,6 +162,8 @@ export async function updateRecord(id: string, updates: Partial<ImageGeneration>
   const updated = await getStorage().update(id, updates)
   if (!updated) {
     log.info('Record not found for update:', id)
+  } else {
+    await enqueueSyncMutation({ entityType: 'image_generation', entityId: id, payload: updated })
   }
   return updated
 }
@@ -166,9 +175,13 @@ export async function addGeneratedImage(id: string, storageKey: string): Promise
     return null
   }
 
-  return getStorage().update(id, {
+  const updated = await getStorage().update(id, {
     generatedImages: [...record.generatedImages, storageKey],
   })
+  if (updated) {
+    await enqueueSyncMutation({ entityType: 'image_generation', entityId: id, payload: updated })
+  }
+  return updated
 }
 
 export async function deleteRecord(id: string): Promise<void> {
@@ -220,6 +233,7 @@ export async function deleteRecord(id: string): Promise<void> {
   if (store.currentRecordId === id) {
     store.setCurrentRecordId(null)
   }
+  await enqueueSyncMutation({ entityType: 'image_generation', entityId: id, deleted: true })
 }
 
 export function useCurrentGeneratingId() {

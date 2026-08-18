@@ -2,6 +2,7 @@
 import { Browser } from '@capacitor/browser'
 import { Device } from '@capacitor/device'
 import * as defaults from '@shared/defaults'
+import type { KaiIdentityConfig, KaiIdentityLoginResult } from '@shared/kai-identity'
 import type { Config, Settings, ShortcutSetting } from '@shared/types'
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
@@ -13,8 +14,11 @@ import { SQLiteSessionMetaStorage } from '@/storage/SQLiteSessionMetaStorage'
 import { IndexedDBTaskSessionStorage, type TaskSessionStorage } from '@/storage/TaskSessionStorage'
 import { CHATBOX_BUILD_PLATFORM } from '@/variables'
 import { getBrowser, getOS } from '../packages/navigator'
+import { CloudSandboxClient } from '../packages/cloud_sandbox'
 import type { Platform, PlatformType } from './interfaces'
+import { KaiIdentityNative } from './mobile_plugins/kai_identity'
 import type { KnowledgeBaseController } from './knowledge-base/interface'
+import { CloudKnowledgeBaseController } from './knowledge-base/cloud-controller'
 import MobileExporter from './mobile_exporter'
 import mobileLogger from './mobile_logger'
 import type { SessionAttachmentRagController } from './session-attachment-rag/interface'
@@ -34,6 +38,8 @@ export default class MobilePlatform extends MobileSQLiteStorage implements Platf
   private _sessionMetaStorage: SessionMetaStorage | null = null
   private _currentAccountKey: string | null = null
   private _currentImageGenAccountKey: string | null = null
+  private readonly cloudSandbox = new CloudSandboxClient()
+  private readonly cloudKnowledgeBase = new CloudKnowledgeBaseController()
 
   constructor() {
     super()
@@ -117,6 +123,75 @@ export default class MobilePlatform extends MobileSQLiteStorage implements Platf
   }
   public async openPaymentUrl(url: string): Promise<void> {
     throw new Error('安全支付链接仅支持桌面客户端')
+  }
+
+  public supportsKaiIdentityLogin(): boolean {
+    return CHATBOX_BUILD_PLATFORM === 'ios'
+  }
+
+  public async loginWithKaiIdentity(config: KaiIdentityConfig): Promise<KaiIdentityLoginResult> {
+    if (!this.supportsKaiIdentityLogin()) {
+      return { success: false, error: 'KAI 统一登录目前仅支持 KOD 桌面版和 iOS 版' }
+    }
+    return KaiIdentityNative.login({ config })
+  }
+
+  public async cancelKaiIdentityLogin(): Promise<void> {
+    if (this.supportsKaiIdentityLogin()) {
+      await KaiIdentityNative.cancel()
+    }
+  }
+
+  public async sandboxInit(config: { workingDirectory: string }) {
+    try {
+      return await this.cloudSandbox.initialize(config.workingDirectory)
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  public async sandboxExec(params: { command: string; timeout?: number }) {
+    return this.cloudSandbox.execute(params.command, params.timeout)
+  }
+
+  public async sandboxRead(params: { filePath: string }) {
+    return this.cloudSandbox.read(params.filePath)
+  }
+
+  public async sandboxWrite(params: { filePath: string; content: string }) {
+    return this.cloudSandbox.write(params.filePath, params.content)
+  }
+
+  public async sandboxEdit(params: { filePath: string; search: string; replace: string }) {
+    return this.cloudSandbox.edit(params.filePath, params.search, params.replace)
+  }
+
+  public async sandboxLs(params: { dirPath: string }) {
+    return this.cloudSandbox.list(params.dirPath)
+  }
+
+  public async sandboxGrep(params: { pattern: string; dirPath?: string; include?: string }) {
+    return this.cloudSandbox.grep(params.pattern, params.dirPath, params.include)
+  }
+
+  public async sandboxFind(params: { dirPath: string; pattern?: string }) {
+    return this.cloudSandbox.find(params.dirPath, params.pattern)
+  }
+
+  public async sandboxKill() {
+    return this.cloudSandbox.kill()
+  }
+
+  public async sandboxReset() {
+    return this.cloudSandbox.reset()
+  }
+
+  public async sandboxStatus() {
+    return this.cloudSandbox.status()
+  }
+
+  public async sandboxCheckAvailability() {
+    return this.cloudSandbox.availability()
   }
 
   public async openLink(url: string): Promise<void> {
@@ -282,7 +357,7 @@ export default class MobilePlatform extends MobileSQLiteStorage implements Platf
   }
 
   public getKnowledgeBaseController(): KnowledgeBaseController {
-    throw new Error('Method not implemented.')
+    return this.cloudKnowledgeBase
   }
 
   public getSessionAttachmentRagController(): SessionAttachmentRagController {
@@ -290,7 +365,9 @@ export default class MobilePlatform extends MobileSQLiteStorage implements Platf
   }
 
   public getSuanbaoController(): SuanbaoPlatformController {
-    return new UnsupportedSuanbaoPlatformController('Desktop overlay is unavailable in the mobile client')
+    return new UnsupportedSuanbaoPlatformController(
+      'iOS uses an in-app pet and system local notifications; a desktop floating overlay is not applicable'
+    )
   }
 
   public getImageGenerationStorage(accountKey?: string): ImageGenerationStorage {

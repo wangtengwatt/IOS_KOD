@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next'
 import iconKod from '@/static/icon-kod.png'
 import iconSkip from '@/static/icons/icon-skip.svg'
 import type { UserType } from '../-hooks/useGuideSession'
+import { brandGuideText } from '../-utils/guideBrand'
 
 interface UserTypeCardsProps {
   onSelect: (type: UserType) => void
@@ -32,7 +33,7 @@ export function UserTypeCards({ onSelect, disabled }: UserTypeCardsProps) {
   const cardTexts = {
     novice: {
       title: t("I'm new to this"),
-      description: t('Use Chatbox AI service'),
+      description: brandGuideText(String(t('Use Chatbox AI service'))),
     },
     expert: {
       title: t('Skip guide'),

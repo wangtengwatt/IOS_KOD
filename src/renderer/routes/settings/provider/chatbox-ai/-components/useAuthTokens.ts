@@ -4,10 +4,76 @@ import { clearKodRelayLocalState } from '@/hooks/useKodRelay'
 import { releaseKodRelayKey } from '@/packages/kodRelay'
 import { getKodApiOrigin } from '@/packages/remote'
 import { authInfoStore, useAuthInfoStore } from '@/stores/authInfoStore'
+import { purgeCurrentAccountData, resetMetaStorage } from '@/stores/chatStore'
+import { resetImageGenerationStorage } from '@/stores/imageGenerationStore'
 import * as premiumActions from '@/stores/premiumActions'
 import queryClient from '@/stores/queryClient'
 import { settingsStore } from '@/stores/settingsStore'
+import { resetTaskSessionStorage } from '@/stores/taskSessionStore'
 import type { AuthTokens } from './types'
+
+function reportLogoutCleanupFailure(task: string, error: unknown) {
+  console.warn(`[KOD logout] ${task} failed`, error)
+}
+
+/**
+ * End the local authenticated session immediately. Remote release and local
+ * account-data cleanup are best-effort follow-up work and must never keep the
+ * user signed in.
+ */
+export function clearKodAuthSession() {
+  const auth = authInfoStore.getState()
+  const relayToken = auth.accessToken
+  const settings = settingsStore.getState()
+
+  // Start cleanup while loginEmail still identifies the account database, but
+  // deliberately do not await it: IndexedDB deletion can be blocked by another
+  // open connection indefinitely.
+  const accountCleanup = purgeCurrentAccountData()
+  const licenseCleanup =
+    settings.licenseActivationMethod === 'login' ? premiumActions.deactivate(false) : Promise.resolve()
+
+  // Authentication termination is the critical operation and must happen
+  // before any fallible network request or storage cleanup.
+  auth.clearTokens()
+
+  try {
+    clearKodRelayLocalState()
+  } catch (error) {
+    reportLogoutCleanupFailure('clear relay state', error)
+  }
+
+  try {
+    settingsStore.setState((state) => ({
+      hasExpiredLicense: false,
+      providers: {
+        ...(state.providers || {}),
+        [ModelProviderEnum.ChatboxAI]: {
+          ...(state.providers?.[ModelProviderEnum.ChatboxAI] || {}),
+          apiHost: undefined,
+          apiKey: undefined,
+          models: [],
+          excludedModels: [],
+        },
+      },
+    }))
+  } catch (error) {
+    reportLogoutCleanupFailure('clear provider state', error)
+  }
+
+  resetMetaStorage()
+  resetTaskSessionStorage()
+  resetImageGenerationStorage()
+  queryClient.clear()
+
+  if (relayToken) {
+    void releaseKodRelayKey(getKodApiOrigin(), relayToken).catch((error) =>
+      reportLogoutCleanupFailure('release relay key', error)
+    )
+  }
+  void accountCleanup.catch((error) => reportLogoutCleanupFailure('purge local account data', error))
+  void licenseCleanup.catch((error) => reportLogoutCleanupFailure('deactivate login license', error))
+}
 
 export function useAuthTokens() {
   const accessToken = useAuthInfoStore((state) => state.accessToken)
@@ -29,68 +95,8 @@ export function useAuthTokens() {
     }
   }, [])
 
-  const clearAuthTokens = useCallback(async () => {
-    try {
-      const relayToken = authInfoStore.getState().accessToken
-      if (relayToken) {
-        try {
-          await releaseKodRelayKey(getKodApiOrigin(), relayToken)
-        } catch (error) {
-          console.warn('[Kod relay] failed to release key during logout', error)
-        }
-      }
-      clearKodRelayLocalState()
-
-      // Purge local data for the current account BEFORE clearing tokens
-      // (needs loginEmail to identify the correct account database)
-      try {
-        const { purgeCurrentAccountData } = await import('@/stores/chatStore')
-        await purgeCurrentAccountData()
-      } catch (e) {
-        console.error('Failed to purge account data on logout:', e)
-        // Continue with logout even if purge fails
-      }
-
-      const settings = settingsStore.getState()
-      if (settings.licenseActivationMethod === 'login') {
-        await premiumActions.deactivate()
-      }
-
-      settingsStore.setState((state) => ({
-        hasExpiredLicense: false,
-        providers: {
-          ...(state.providers || {}),
-          [ModelProviderEnum.ChatboxAI]: {
-            ...(state.providers?.[ModelProviderEnum.ChatboxAI] || {}),
-            apiHost: undefined,
-            apiKey: undefined,
-            models: [],
-            excludedModels: [],
-          },
-        },
-      }))
-
-      authInfoStore.getState().clearTokens()
-
-      // Reset all account-isolated storage singletons so next login uses fresh DB instances
-      const { resetMetaStorage } = await import('@/stores/chatStore')
-      resetMetaStorage()
-
-      const { resetTaskSessionStorage } = await import('@/stores/taskSessionStore')
-      resetTaskSessionStorage()
-
-      const { resetImageGenerationStorage } = await import('@/stores/imageGenerationStore')
-      resetImageGenerationStorage()
-
-      queryClient.clear()
-
-      queryClient.removeQueries({ queryKey: ['userProfile'] })
-      queryClient.removeQueries({ queryKey: ['userLicenses'] })
-      queryClient.removeQueries({ queryKey: ['licenseDetail'] })
-      queryClient.removeQueries({ queryKey: ['license-detail'] })
-    } catch (error) {
-      console.error('Failed to clear auth tokens:', error)
-    }
+  const clearAuthTokens = useCallback(() => {
+    clearKodAuthSession()
   }, [])
 
   return {

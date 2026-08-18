@@ -5,6 +5,7 @@ const MAX_TIMER_DELAY = 2_147_000_000
 
 export interface SuanbaoReminderDelivery {
   deliver(reminder: SuanbaoReminder): Promise<void> | void
+  reconcile?(reminders: SuanbaoReminder[]): Promise<void> | void
   onError?(reason: unknown): void
 }
 
@@ -78,6 +79,7 @@ export class SuanbaoReminderScheduler {
         revision: reminder.revision + 1,
       })
     }
+    await this.delivery.reconcile?.(await this.repository.listReminders())
     const next = (await this.repository.listScheduledReminders())[0]
     if (!next || !this.started) return
     const delay = Math.min(MAX_TIMER_DELAY, Math.max(0, next.triggerAt - this.now()))

@@ -6,6 +6,7 @@ const config: CapacitorConfig = {
   webDir: 'release/app/dist/renderer',
   server: {
     androidScheme: 'https',
+    iosScheme: 'https',
   },
 }
 

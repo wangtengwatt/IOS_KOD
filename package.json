@@ -58,6 +58,8 @@
     "mobile:sync:ios": "cross-env CHATBOX_BUILD_TARGET=mobile_app CHATBOX_BUILD_PLATFORM=ios electron-vite build && pnpm run delete-sourcemaps && npx cap sync ios",
     "mobile:sync:android": "cross-env CHATBOX_BUILD_TARGET=mobile_app CHATBOX_BUILD_PLATFORM=android electron-vite build && pnpm run delete-sourcemaps && npx cap sync android",
     "mobile:ios": "pnpm run mobile:sync:ios && npx cap open ios",
+    "mobile:verify:ios": "node scripts/verify-ios-release.mjs",
+    "mobile:verify:ios:release": "node scripts/verify-ios-release.mjs --release",
     "mobile:android": "pnpm run mobile:sync:android && npx cap open android",
     "mobile:assets": "npx capacitor-assets generate --ios --android",
     "prepare": "node -e \"try { require('husky') } catch(e) { process.exit(0) }\" && husky || true",

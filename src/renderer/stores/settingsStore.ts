@@ -11,6 +11,8 @@ import { createJSONStorage, persist, subscribeWithSelector } from 'zustand/middl
 import { immer } from 'zustand/middleware/immer'
 import { getLogger } from '@/lib/utils'
 import platform from '@/platform'
+import { enqueueSyncMutation } from '@/sync/outbox'
+import { getModelSyncPayload } from '@/sync/payloads'
 import storage from '@/storage'
 import { mergeProviderSettings, type ProviderSettingsUpdate } from './providerSettings'
 
@@ -153,6 +155,29 @@ settingsStore.subscribe((state, prevState) => {
   // 如果开机自启动配置发生变化，需要重新设置开机自启动
   if (Boolean(state.autoLaunch) !== Boolean(prevState.autoLaunch)) {
     platform.ensureAutoLaunch(state.autoLaunch)
+  }
+  if (
+    state.providers !== prevState.providers ||
+    state.customProviders !== prevState.customProviders ||
+    state.favoritedModels !== prevState.favoritedModels ||
+    state.defaultChatModel !== prevState.defaultChatModel ||
+    state.threadNamingModel !== prevState.threadNamingModel ||
+    state.searchTermConstructionModel !== prevState.searchTermConstructionModel ||
+    state.ocrModel !== prevState.ocrModel
+  ) {
+    void enqueueSyncMutation({
+      entityType: 'model_settings',
+      entityId: 'current',
+      payload: getModelSyncPayload(state),
+      sensitive: true,
+    })
+  }
+  if (state.skills !== prevState.skills) {
+    void enqueueSyncMutation({
+      entityType: 'skill_settings',
+      entityId: 'current',
+      payload: state.skills,
+    })
   }
 })
 

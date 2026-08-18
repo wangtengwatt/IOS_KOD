@@ -10,16 +10,10 @@ import Loading from '@/components/icons/Loading'
 import Markdown from '@/components/Markdown'
 import { cn } from '@/lib/utils'
 import type { UserLicense } from '@/packages/remote'
+import iconKod from '@/static/icon-kod.png'
 import type { GuideToolPart, GuideUIMessage, UserType } from '../-hooks/useGuideSession'
-import {
-  FreeTrialLink,
-  LoginButton,
-  NewChatButton,
-  NewChatTip,
-  ProviderSettingsButton,
-  ViewLicenseButton,
-} from './ActionButton'
-import { ClaimWaitingCard } from './ClaimWaitingCard'
+import { brandGuideText } from '../-utils/guideBrand'
+import { LoginButton, NewChatButton, NewChatTip, ProviderSettingsButton, ViewLicenseButton } from './ActionButton'
 import { SuggestedQuestions } from './SuggestedQuestions'
 import { UserTypeCards } from './UserTypeCards'
 
@@ -41,16 +35,12 @@ function ToolPartRenderer({
   onSelectUserType,
   onLoginSuccess,
   onQuestionClick,
-  onClaimStart,
-  onClaimDetected,
   disabled,
 }: {
   part: GuideToolPart
   onSelectUserType?: (type: UserType) => void
   onLoginSuccess?: () => void
   onQuestionClick?: (question: string) => void
-  onClaimStart?: () => void
-  onClaimDetected?: (license: UserLicense) => void
   disabled?: boolean
 }) {
   switch (part.toolName) {
@@ -81,11 +71,10 @@ function ToolPartRenderer({
       return <SuggestedQuestions onQuestionClick={onQuestionClick} disabled={disabled} />
 
     case 'show_free_trial_link':
-      return <FreeTrialLink onAfterClick={onClaimStart} />
+      return <ViewLicenseButton />
 
     case 'show_claim_waiting':
-      if (!onClaimDetected) return null
-      return <ClaimWaitingCard onClaimDetected={onClaimDetected} />
+      return <ViewLicenseButton />
 
     case 'mark_completed':
     case 'activate_license':
@@ -102,8 +91,6 @@ export function GuideMessage({
   onSelectUserType,
   onLoginSuccess,
   onQuestionClick,
-  onClaimStart,
-  onClaimDetected,
   isLastMessage,
 }: GuideMessageProps) {
   const isUser = message.role === 'user'
@@ -125,7 +112,7 @@ export function GuideMessage({
         {/* Avatar Column */}
         <Grid item>
           <Box className={cn('relative', !isAssistant ? 'mt-1' : 'mt-2')}>
-            {isAssistant ? <AssistantAvatar sessionType="guide" /> : <UserAvatar />}
+            {isAssistant ? <AssistantAvatar sessionType="guide" picUrl={iconKod} /> : <UserAvatar />}
             {/* Loading overlay on avatar - matches chat behavior */}
             {isAssistant && isStreaming && (
               <Flex className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
@@ -155,7 +142,7 @@ export function GuideMessage({
                       </p>
                     ) : (
                       <Markdown key={key} generating={isStreaming}>
-                        {part.text}
+                        {brandGuideText(part.text)}
                       </Markdown>
                     )
                   }
@@ -194,8 +181,6 @@ export function GuideMessage({
                       onSelectUserType={onSelectUserType}
                       onLoginSuccess={onLoginSuccess}
                       onQuestionClick={onQuestionClick}
-                      onClaimStart={onClaimStart}
-                      onClaimDetected={onClaimDetected}
                       disabled={shouldDisable}
                     />
                   )

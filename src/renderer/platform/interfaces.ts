@@ -1,5 +1,6 @@
 /** biome-ignore-all lint/suspicious/noExplicitAny: <any> */
 import type { Config, Language, Settings, ShortcutSetting } from '@shared/types'
+import type { KaiIdentityConfig, KaiIdentityLoginResult } from '@shared/kai-identity'
 import type { ImageGenerationStorage } from '@/storage/ImageGenerationStorage'
 import type { SessionMetaStorage } from '@/storage/SessionMetaStorage'
 import type { TaskSessionStorage } from '@/storage/TaskSessionStorage'
@@ -46,6 +47,9 @@ export interface Platform extends Storage {
   onNavigate?(callback: (path: string) => void): () => void
   openLink(url: string): Promise<void>
   openPaymentUrl(url: string): Promise<void>
+  supportsKaiIdentityLogin(): boolean
+  loginWithKaiIdentity(config: KaiIdentityConfig): Promise<KaiIdentityLoginResult>
+  cancelKaiIdentityLogin(): Promise<void>
   getDeviceName(): Promise<string>
   getInstanceName(): Promise<string>
   getLocale(): Promise<Language>

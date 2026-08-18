@@ -22,6 +22,7 @@ import { v4 as uuidv4 } from 'uuid'
 import platform from '@/platform'
 import storage, { StorageKey } from '@/storage'
 import { deriveAccountKey } from '@/storage/accountKey'
+import { enqueueSyncMutation } from '@/sync/outbox'
 import type { SessionMetaStorage } from '@/storage/SessionMetaStorage'
 import { sortSessionRecords } from '@/storage/SessionMetaStorage'
 import { StorageKeyGenerator } from '@/storage/StoreStorage'
@@ -260,6 +261,13 @@ export async function createSession(newSession: Omit<Session, 'id'>, previousId?
 
   updateSessionListData((items) => sortSessionRecords([...items, record]))
 
+  await enqueueSyncMutation({
+    entityType: 'session',
+    entityId: session.id,
+    payload: { session, meta: record },
+    clientUpdatedAt: record.createdAt,
+  })
+
   return session
 }
 
@@ -301,6 +309,12 @@ export async function updateSessionWithMessages(sessionId: string, updater: Upda
     )
   }
   _setSessionCache(sessionId, updated)
+  const syncMeta = await (await getMetaStorage()).getById(sessionId)
+  await enqueueSyncMutation({
+    entityType: 'session',
+    entityId: sessionId,
+    payload: { session: updated, meta: syncMeta },
+  })
   return updated
 }
 
@@ -356,6 +370,7 @@ export async function deleteSession(id: string) {
   cleanupSessionAtomCache(id)
   clearScrollPositionCache(id)
   delete sessionUpdateQueues[id]
+  await enqueueSyncMutation({ entityType: 'session', entityId: id, deleted: true })
 }
 
 export async function deleteSessions(ids: string[]) {
@@ -390,6 +405,7 @@ export async function deleteSessions(ids: string[]) {
     cleanupSessionAtomCache(id)
     clearScrollPositionCache(id)
     delete sessionUpdateQueues[id]
+    await enqueueSyncMutation({ entityType: 'session', entityId: id, deleted: true })
   }
 }
 

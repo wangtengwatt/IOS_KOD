@@ -5,10 +5,11 @@ export class UnsupportedSuanbaoPlatformController implements SuanbaoPlatformCont
   constructor(private readonly reason: string) {}
 
   getCapabilities(): Promise<SuanbaoPlatformCapabilities> {
+    const ios = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/.test(navigator.userAgent)
     return Promise.resolve({
       overlay: 'in-app',
-      notifications: false,
-      backgroundScheduling: 'foreground-only',
+      notifications: ios,
+      backgroundScheduling: ios ? 'reliable' : 'foreground-only',
       geolocation: typeof navigator !== 'undefined' && 'geolocation' in navigator,
       systemCalendarRead: false,
       reason: this.reason,

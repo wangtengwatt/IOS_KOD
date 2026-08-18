@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next'
 import { Modal } from '@/components/layout/Overlay'
 import { MCPServer } from '@/packages/mcp/controller'
 import type { MCPServerConfig } from '@/packages/mcp/types'
+import platform from '@/platform'
 import { trackEvent } from '@/utils/track'
 import { getConfigFromFormValues, getFormValuesFromConfig, type MCPServerConfigFormValues } from './utils'
 
@@ -71,6 +72,7 @@ const ConfigForm: FC<{
   const [testing, setTesting] = useState(false)
   const [testingResult, setTestingResult] = useState<ConnectionTestingResult | null>()
   const testingAbortController = useRef<AbortController | null>(null)
+  const supportsStdio = platform.type === 'desktop'
 
   const form = useForm<MCPServerConfigFormValues>({
     mode: 'controlled',
@@ -130,9 +132,14 @@ const ConfigForm: FC<{
         >
           <Group>
             <Radio variant="outline" size="sm" value="http" label={t('Remote (http/sse)')} />
-            <Radio variant="outline" size="sm" value="stdio" label={t('Local (stdio)')} />
+            {supportsStdio && <Radio variant="outline" size="sm" value="stdio" label={t('Local (stdio)')} />}
           </Group>
         </Radio.Group>
+        {!supportsStdio && form.values.transport.type === 'stdio' && (
+          <Text size="sm" c="chatbox-error">
+            iOS 暂不能启动本地 stdio MCP；请改用远程 HTTP/SSE 服务。
+          </Text>
+        )}
         {form.values.transport.type === 'stdio' && (
           <>
             <Textarea
@@ -178,7 +185,12 @@ const ConfigForm: FC<{
                 {t('Cancel')}
               </Button>
             )}
-            <Button variant="outline" onClick={testConnection} loading={testing} disabled={testing}>
+            <Button
+              variant="outline"
+              onClick={testConnection}
+              loading={testing}
+              disabled={testing || (!supportsStdio && form.values.transport.type === 'stdio')}
+            >
               {t('Test')}
             </Button>
             {props.mode === 'edit' || testingResult ? (

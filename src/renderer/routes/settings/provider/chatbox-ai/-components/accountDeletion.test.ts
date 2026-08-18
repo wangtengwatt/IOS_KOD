@@ -75,8 +75,8 @@ describe('account deletion', () => {
     mocks.repositoryDeleteDatabase.mockResolvedValue(undefined)
   })
 
-  it('requires password, exact DELETE text and acknowledgement', () => {
-    expect(canDeleteAccount('', 'DELETE', true)).toBe(false)
+  it('supports KAI-only accounts while requiring exact DELETE text and acknowledgement', () => {
+    expect(canDeleteAccount('', 'DELETE', true)).toBe(true)
     expect(canDeleteAccount('password', 'delete', true)).toBe(false)
     expect(canDeleteAccount('password', 'DELETE', false)).toBe(false)
     expect(canDeleteAccount('password', 'DELETE', true)).toBe(true)

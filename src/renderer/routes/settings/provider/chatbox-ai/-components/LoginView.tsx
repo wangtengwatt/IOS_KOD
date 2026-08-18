@@ -1,15 +1,14 @@
 import { Alert, Anchor, Button, Flex, Image, Paper, Stack, Text, Title } from '@mantine/core'
-import type { ElectronIPC } from '@shared/electron-types'
-import type { KaiIdentityLoginResult } from '@shared/kai-identity'
-import { KaiIdentityIpcChannels } from '@shared/kai-identity'
 import { IconCircleCheckFilled, IconFingerprint } from '@tabler/icons-react'
 import { forwardRef, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { trackJkClickEvent } from '@/analytics/jk'
 import { JK_EVENTS, JK_PAGE_NAMES } from '@/analytics/jk-events'
 import { ScalableIcon } from '@/components/common/ScalableIcon'
+import { consumeKodAuthReturnTo } from '@/packages/kodAuthReturn'
 import { getKaiIdentityConfig, loginWithKaiIdentity } from '@/packages/remote'
 import platform from '@/platform'
+import { router } from '@/router'
 import icon from '@/static/icon.png'
 import * as premiumActions from '@/stores/premiumActions'
 import { settingsStore } from '@/stores/settingsStore'
@@ -35,6 +34,10 @@ export const LoginView = forwardRef<HTMLDivElement, LoginViewProps>(({ language,
         await premiumActions.deactivate(false) // false = 不清除 login tokens
       }
       await saveAuthTokens({ ...tokens, email: tokens.email })
+      const returnTo = consumeKodAuthReturnTo()
+      if (returnTo === '/compute-center') {
+        await router.navigate({ to: '/compute-center', search: {} })
+      }
     },
     [saveAuthTokens]
   )
@@ -43,16 +46,14 @@ export const LoginView = forwardRef<HTMLDivElement, LoginViewProps>(({ language,
     setKaiLoginError('')
     setKaiLoginLoading(true)
     try {
-      if (platform.type !== 'desktop') {
-        throw new Error(String(t('KAI unified login is currently available in the KOD desktop app')))
+      if (!platform.supportsKaiIdentityLogin()) {
+        throw new Error(String(t('KAI unified login is currently available in the KOD desktop and iOS apps')))
       }
       const config = await getKaiIdentityConfig()
       if (!config.enabled) {
         throw new Error(String(t('KAI unified login is not configured yet')))
       }
-      const ipc = (platform as typeof platform & { ipc: ElectronIPC }).ipc
-      const resultJson: string = await ipc.invoke(KaiIdentityIpcChannels.LOGIN, JSON.stringify(config))
-      const result: KaiIdentityLoginResult = JSON.parse(resultJson)
+      const result = await platform.loginWithKaiIdentity(config)
       if (!result.success || !result.credentials?.accessToken) {
         throw new Error(result.error || String(t('KAI unified login failed')))
       }
@@ -67,10 +68,7 @@ export const LoginView = forwardRef<HTMLDivElement, LoginViewProps>(({ language,
 
   useEffect(() => {
     return () => {
-      if (platform.type === 'desktop') {
-        const ipc = (platform as typeof platform & { ipc: ElectronIPC }).ipc
-        ipc.invoke(KaiIdentityIpcChannels.CANCEL).catch(() => {})
-      }
+      platform.cancelKaiIdentityLogin().catch(() => {})
     }
   }, [])
 
@@ -113,7 +111,7 @@ export const LoginView = forwardRef<HTMLDivElement, LoginViewProps>(({ language,
               variant="light"
               leftSection={<IconFingerprint size={18} />}
               loading={kaiLoginLoading}
-              disabled={kaiLoginLoading || platform.type !== 'desktop'}
+              disabled={kaiLoginLoading || !platform.supportsKaiIdentityLogin()}
               onClick={() => void handleKaiIdentityLogin()}
             >
               {t('Login with KAI unified identity')}

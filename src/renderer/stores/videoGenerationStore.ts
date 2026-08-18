@@ -5,6 +5,7 @@ import { createStore, useStore } from 'zustand'
 import storage from '@/storage'
 import { deriveAccountKey } from '@/storage/accountKey'
 import { authInfoStore, useAuthInfoStore } from '@/stores/authInfoStore'
+import { enqueueSyncMutation } from '@/sync/outbox'
 import { queryClient } from './queryClient'
 
 export const VIDEO_GEN_QUERY_KEY = 'video-generation'
@@ -45,6 +46,12 @@ function writeRecords(records: VideoGeneration[]) {
   localStorage.setItem(historyKey(), JSON.stringify(records))
 }
 
+/** Apply one server-synchronized record without deleting unrelated local history. */
+export function applySyncedVideoRecord(id: string, record: VideoGeneration | null) {
+  const remaining = readRecords().filter((item) => item.id !== id)
+  writeRecords(record ? [record, ...remaining] : remaining)
+}
+
 export function listVideoRecords() {
   return readRecords().sort((left, right) => right.createdAt - left.createdAt)
 }
@@ -62,6 +69,12 @@ export function createVideoRecord(input: Omit<VideoGeneration, 'id' | 'createdAt
     generatedVideos: [],
   }
   writeRecords([record, ...readRecords()])
+  void enqueueSyncMutation({
+    entityType: 'video_generation',
+    entityId: record.id,
+    payload: record,
+    clientUpdatedAt: record.createdAt,
+  })
   return record
 }
 
@@ -72,7 +85,10 @@ export function updateVideoRecord(id: string, updates: Partial<VideoGeneration>)
     updated = { ...record, ...updates }
     return updated
   })
-  if (updated) writeRecords(records)
+  if (updated) {
+    writeRecords(records)
+    void enqueueSyncMutation({ entityType: 'video_generation', entityId: id, payload: updated })
+  }
   return updated
 }
 
@@ -91,6 +107,7 @@ export async function deleteVideoRecord(id: string) {
   if (videoGenerationStore.getState().currentRecordId === id) {
     videoGenerationStore.setState({ currentRecordId: null })
   }
+  await enqueueSyncMutation({ entityType: 'video_generation', entityId: id, deleted: true })
   await queryClient.invalidateQueries({ queryKey: [VIDEO_GEN_LIST_QUERY_KEY] })
 }
 

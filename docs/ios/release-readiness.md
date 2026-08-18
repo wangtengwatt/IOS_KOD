@@ -1,8 +1,11 @@
 # iOS release readiness
 
-`pnpm run mobile:verify:ios` validates the source layout on any development
-machine. `pnpm run mobile:verify:ios:release` is deliberately stricter and must
-run in the protected TestFlight CI environment.
+This repository is an iOS-native thin wrapper. The renderer and shared product
+logic are built only in the canonical KOD repository pinned by
+`kod-upstream.lock.json`. Run `pnpm sync:ios` to produce the ignored `www/`
+bundle, then `pnpm verify:wrapper` and `pnpm verify:ios` on any development
+machine. `pnpm verify:ios:release` is deliberately stricter and must run in the
+protected TestFlight CI environment.
 
 ## External prerequisites
 

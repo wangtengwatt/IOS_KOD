@@ -1,16 +1,30 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 
+import { validateLock, validateManifest } from './sync-upstream.mjs'
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const release = process.argv.includes('--release')
 const failures = []
 
+function absolute(path) {
+  return resolve(root, path)
+}
+
 function requireFile(path) {
-  if (!existsSync(path)) failures.push(`missing ${path}`)
+  if (!existsSync(absolute(path))) {
+    failures.push(`missing ${path}`)
+    return false
+  }
+  return true
 }
 
 function requireText(path, value) {
-  requireFile(path)
-  if (existsSync(path) && !readFileSync(path, 'utf8').includes(value)) failures.push(`${path} is missing ${value}`)
+  if (requireFile(path) && !readFileSync(absolute(path), 'utf8').includes(value)) {
+    failures.push(`${path} is missing ${value}`)
+  }
 }
 
 function requireEnvironment(name, predicate = (value) => Boolean(value)) {
@@ -18,6 +32,7 @@ function requireEnvironment(name, predicate = (value) => Boolean(value)) {
 }
 
 requireText('capacitor.config.ts', "appId: 'com.kai.kod'")
+requireText('capacitor.config.ts', "webDir: 'www'")
 requireText('ios/App/App.xcodeproj/project.pbxproj', 'IPHONEOS_DEPLOYMENT_TARGET = 17.0;')
 requireText('ios/App/App.xcodeproj/project.pbxproj', 'TARGETED_DEVICE_FAMILY = "1,2";')
 for (const nativeSource of [
@@ -29,6 +44,7 @@ for (const nativeSource of [
 ]) {
   requireText('ios/App/App.xcodeproj/project.pbxproj', nativeSource)
 }
+requireText('ios/App/App/App.entitlements', 'com.apple.developer.associated-domains')
 requireText('ios/App/App/App.entitlements', 'applinks:kod.kai.com')
 requireText('ios/App/App/App.entitlements', 'webcredentials:kod.kai.com')
 requireText('ios/App/App/BridgeViewController.swift', 'registerPluginInstance(KaiIdentityPlugin())')
@@ -41,12 +57,16 @@ requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyAccessedAPITypes')
 requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyCollectedDataTypeEmailAddress')
 requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyCollectedDataTypeOtherUserContent')
 requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyCollectedDataTypePhotosorVideos')
-requireText('src/renderer/index.tsx', "CHATBOX_BUILD_PLATFORM !== 'ios'")
-requireText('src/renderer/sync/engine.ts', 'uploadMutationMedia')
-requireText('src/renderer/sync/engine.ts', 'downloadChangeMedia')
-requireText('src/renderer/packages/cloud_sandbox.ts', 'kod-cloud-sandbox-output')
 requireFile('docs/ios/apple-app-site-association.json')
 requireFile('LICENSE')
+
+try {
+  const lock = validateLock(JSON.parse(readFileSync(absolute('kod-upstream.lock.json'), 'utf8')))
+  const manifest = JSON.parse(readFileSync(absolute('www/kod-build-manifest.json'), 'utf8'))
+  validateManifest(lock, manifest)
+} catch (error) {
+  failures.push(`upstream bundle is missing or invalid: ${error instanceof Error ? error.message : String(error)}`)
+}
 
 if (release) {
   requireEnvironment('APPLE_TEAM_ID', (value) => /^[A-Z0-9]{10}$/.test(value))
@@ -58,7 +78,13 @@ if (release) {
   requireEnvironment('IOS_PROVISIONING_PROFILE_BASE64')
   requireEnvironment('KOD_IDENTITY_IOS_CLIENT_ID')
   requireEnvironment('KOD_STOREKIT_PRODUCT_IDS')
-  requireEnvironment('KOD_PRIVACY_POLICY_URL', (value) => value.startsWith('https://'))
+  requireEnvironment('KOD_PRIVACY_POLICY_URL', (value) => {
+    try {
+      return new URL(value).protocol === 'https:'
+    } catch {
+      return false
+    }
+  })
   requireEnvironment('KOD_APP_STORE_GPL_APPROVED', (value) => value === 'yes')
 }
 

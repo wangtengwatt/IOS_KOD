@@ -25,6 +25,22 @@ The native project targets iOS 17 and both iPhone and iPad. KAI identity,
 secure credential storage, StoreKit 2, and notification bridges are implemented
 under `ios/App/App/`.
 
+## Manual iOS device-frame preview
+
+The maintained preview is owned by canonical KOD at
+`src/renderer/static/ios-preview.html`. From the canonical repository, start the
+mobile renderer in development mode and open the stable URL:
+
+```powershell
+$env:CHATBOX_BUILD_TARGET='mobile_app'
+$env:CHATBOX_BUILD_PLATFORM='ios'
+pnpm exec electron-vite dev
+```
+
+Open `http://127.0.0.1:1212/ios-preview.html`. The same file is emitted into the
+canonical iOS bundle and therefore into this wrapper's ignored
+`www/ios-preview.html` after `pnpm sync:ios`.
+
 ## Release boundary
 
 Unsigned simulator builds run in `.github/workflows/ios.yml`. TestFlight upload

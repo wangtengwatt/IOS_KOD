@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { cp, lstat, mkdir, readFile, realpath, rm } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm } from 'node:fs/promises'
+import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
@@ -57,20 +58,61 @@ export function validateManifest(lockValue, value) {
     throw new Error('manifest rendererSha256 must be a lowercase SHA-256 digest')
   }
   if (!Array.isArray(manifest.files)) throw new Error('manifest files must be an array')
+  let previousPath = null
   for (const file of manifest.files) {
     requireObject(file, 'manifest file')
-    if (typeof file.path !== 'string' || !file.path || file.path.includes('\\') || file.path.startsWith('/')) {
+    if (
+      typeof file.path !== 'string' ||
+      !file.path ||
+      file.path.includes('\\') ||
+      file.path.startsWith('/') ||
+      isAbsolute(file.path) ||
+      /^[a-zA-Z]:/.test(file.path) ||
+      file.path.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+    ) {
       throw new Error('manifest file path must be a non-empty relative POSIX path')
     }
+    if (previousPath !== null && file.path <= previousPath) {
+      throw new Error('manifest file paths must be unique and sorted in ordinal order')
+    }
+    previousPath = file.path
     if (!Number.isSafeInteger(file.bytes) || file.bytes < 0) throw new Error('manifest file bytes must be non-negative')
     if (typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256)) {
       throw new Error('manifest file sha256 must be a lowercase SHA-256 digest')
     }
   }
+  const rows = manifest.files.map((file) => `${file.path}\0${file.bytes}\0${file.sha256}\n`).join('')
+  if (sha256(Buffer.from(rows, 'utf8')) !== manifest.rendererSha256) {
+    throw new Error('manifest rendererSha256 does not match its file rows')
+  }
   return manifest
 }
 
-function runCommand(command, arguments_, cwd, env = process.env) {
+function sha256(contents) {
+  return createHash('sha256').update(contents).digest('hex')
+}
+
+function redact(value, secrets) {
+  return secrets.reduce((result, secret) => (secret ? result.replaceAll(secret, '[REDACTED]') : result), value)
+}
+
+export function gitAuthenticationEnvironment(baseEnvironment, token) {
+  const env = { ...baseEnvironment }
+  if (!token) return { env, secrets: [] }
+  if (typeof token !== 'string' || /[\r\n]/.test(token)) throw new Error('KOD upstream read token is invalid')
+  const count = Number.parseInt(env.GIT_CONFIG_COUNT || '0', 10)
+  if (!Number.isSafeInteger(count) || count < 0) throw new Error('GIT_CONFIG_COUNT is invalid')
+  env.GIT_CONFIG_COUNT = String(count + 1)
+  env[`GIT_CONFIG_KEY_${count}`] = 'http.https://gitlab.kaiweb.org/.extraheader'
+  env[`GIT_CONFIG_VALUE_${count}`] = `PRIVATE-TOKEN: ${token}`
+  return { env, secrets: [token] }
+}
+
+export function managedDependencyInstallPolicy(managed) {
+  return managed ? 'frozen-install' : 'reuse-configured-upstream'
+}
+
+export function runCommand(command, arguments_, cwd, env = process.env, secrets = []) {
   const result = spawnSync(command, arguments_, {
     cwd,
     encoding: 'utf8',
@@ -79,13 +121,16 @@ function runCommand(command, arguments_, cwd, env = process.env) {
   })
   if (result.error || result.status !== 0) {
     const exitCode = result.status ?? 'spawn-error'
-    const stdout = result.stdout || ''
-    const stderr = result.stderr || result.error?.message || ''
+    const stdout = redact(result.stdout || '', secrets)
+    const stderr = redact(result.stderr || result.error?.message || '', secrets)
     throw new Error(
-      `command failed: ${command} ${arguments_.join(' ')}\nexit code: ${exitCode}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+      redact(
+        `command failed: ${command} ${arguments_.join(' ')}\nexit code: ${exitCode}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+        secrets,
+      ),
     )
   }
-  return result.stdout.trim()
+  return redact(result.stdout.trim(), secrets)
 }
 
 function runPnpm(arguments_, cwd, env = process.env) {
@@ -129,15 +174,28 @@ async function exists(path) {
 async function prepareManagedUpstream(lock) {
   const cacheRoot = resolve(wrapperRoot, '.kod-upstream')
   const upstreamRoot = resolve(cacheRoot, 'kod')
+  const authentication = gitAuthenticationEnvironment(process.env, process.env.KOD_UPSTREAM_READ_TOKEN)
   if (!(await exists(upstreamRoot))) {
     await mkdir(cacheRoot, { recursive: true })
-    runCommand('git', ['clone', '--no-checkout', lock.repository, upstreamRoot], wrapperRoot)
+    runCommand(
+      'git',
+      ['clone', '--no-checkout', lock.repository, upstreamRoot],
+      wrapperRoot,
+      authentication.env,
+      authentication.secrets,
+    )
   } else {
     const remote = runCommand('git', ['remote', 'get-url', 'origin'], upstreamRoot)
     if (remote !== lock.repository) throw new Error('cached upstream origin does not match lock repository')
   }
 
-  runCommand('git', ['fetch', '--prune', 'origin', lock.commit], upstreamRoot)
+  runCommand(
+    'git',
+    ['fetch', '--prune', 'origin', lock.commit],
+    upstreamRoot,
+    authentication.env,
+    authentication.secrets,
+  )
   runCommand('git', ['checkout', '--detach', lock.commit], upstreamRoot)
   return upstreamRoot
 }
@@ -151,17 +209,92 @@ async function assertExactHead(upstreamRoot, commit) {
   return requestedRoot
 }
 
-async function safeReplaceWebRoot(source) {
-  const canonicalWrapperRoot = await realpath(wrapperRoot)
-  const target = resolve(canonicalWrapperRoot, 'www')
-  if (dirname(target) !== canonicalWrapperRoot) throw new Error('www target parent must equal wrapper root')
+async function enumerateBundleFiles(root) {
+  const resolvedRoot = resolve(root)
+  const files = []
 
+  async function visit(directory) {
+    const entries = await readdir(directory, { withFileTypes: true })
+    entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+    for (const entry of entries) {
+      const absolutePath = resolve(directory, entry.name)
+      const metadata = await lstat(absolutePath)
+      if (metadata.isSymbolicLink()) throw new Error(`bundle contains a symbolic link or junction: ${absolutePath}`)
+      if (metadata.isDirectory()) {
+        await visit(absolutePath)
+        continue
+      }
+      if (!metadata.isFile()) throw new Error(`bundle contains a non-regular file: ${absolutePath}`)
+      const path = relative(resolvedRoot, absolutePath).replaceAll('\\', '/')
+      if (path === manifestName) continue
+      const contents = await readFile(absolutePath)
+      files.push({ path, bytes: contents.byteLength, sha256: sha256(contents) })
+    }
+  }
+
+  await visit(resolvedRoot)
+  files.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
+  return files
+}
+
+export async function verifyBundleTree(bundleRoot, manifestValue) {
+  const manifest = requireObject(manifestValue, 'iOS build manifest')
+  const actualFiles = await enumerateBundleFiles(bundleRoot)
+  for (let index = 0; index < Math.max(manifest.files.length, actualFiles.length); index += 1) {
+    const expected = manifest.files[index]
+    const actual = actualFiles[index]
+    if (!expected) throw new Error(`bundle has unexpected extra file: ${actual.path}`)
+    if (!actual) throw new Error(`bundle is missing file: ${expected.path}`)
+    if (expected.path !== actual.path) {
+      if (!actualFiles.some((file) => file.path === expected.path)) throw new Error(`bundle is missing file: ${expected.path}`)
+      throw new Error(`bundle has unexpected extra file: ${actual.path}`)
+    }
+    if (expected.bytes !== actual.bytes) throw new Error(`bundle byte count differs for ${expected.path}`)
+    if (expected.sha256 !== actual.sha256) throw new Error(`bundle SHA-256 differs for ${expected.path}`)
+  }
+  const rows = actualFiles.map((file) => `${file.path}\0${file.bytes}\0${file.sha256}\n`).join('')
+  if (sha256(Buffer.from(rows, 'utf8')) !== manifest.rendererSha256) {
+    throw new Error('bundle aggregate rendererSha256 differs from manifest')
+  }
+}
+
+async function assertSafeWebRoot(wrapperDirectory, target) {
+  const requestedRoot = resolve(wrapperDirectory)
+  if (resolve(target) !== resolve(requestedRoot, 'www')) throw new Error('www target parent must equal wrapper root')
+  const rootMetadata = await lstat(requestedRoot)
+  if (rootMetadata.isSymbolicLink()) throw new Error('wrapper root must not be a symbolic link or junction')
+  const canonicalWrapperRoot = await realpath(requestedRoot)
   if (await exists(target)) {
     const metadata = await lstat(target)
-    if (metadata.isSymbolicLink()) throw new Error('refusing to replace a symbolic-link www target')
+    if (metadata.isSymbolicLink()) throw new Error('refusing to replace a symbolic-link or junction www target')
+    const canonicalTarget = await realpath(target)
+    if (dirname(canonicalTarget) !== canonicalWrapperRoot) throw new Error('www target resolves outside wrapper root')
   }
-  await rm(target, { recursive: true, force: true })
-  await cp(source, target, { recursive: true })
+  return canonicalWrapperRoot
+}
+
+export async function safeReplaceWebRoot(source, wrapperDirectory = wrapperRoot, manifest) {
+  await verifyBundleTree(source, manifest)
+  const canonicalWrapperRoot = await assertSafeWebRoot(wrapperDirectory, resolve(wrapperDirectory, 'www'))
+  const target = resolve(canonicalWrapperRoot, 'www')
+  const temporary = await mkdtemp(resolve(canonicalWrapperRoot, '.www-sync-'))
+  const backup = resolve(canonicalWrapperRoot, `.www-backup-${process.pid}-${Date.now()}`)
+  let movedExisting = false
+  try {
+    await cp(source, temporary, { recursive: true })
+    await verifyBundleTree(temporary, manifest)
+    if (await exists(target)) {
+      await rename(target, backup)
+      movedExisting = true
+    }
+    await rename(temporary, target)
+    if (movedExisting) await rm(backup, { recursive: true, force: true })
+  } catch (error) {
+    if (movedExisting && !(await exists(target)) && (await exists(backup))) await rename(backup, target)
+    throw error
+  } finally {
+    if (await exists(temporary)) await rm(temporary, { recursive: true, force: true })
+  }
 }
 
 async function main() {
@@ -173,14 +306,15 @@ async function main() {
     lock.commit,
   )
 
-  if (managed && !(await exists(resolve(upstreamRoot, 'node_modules')))) {
+  if (managedDependencyInstallPolicy(managed) === 'frozen-install') {
     runPnpm(['install', '--frozen-lockfile'], upstreamRoot, upstreamBuildEnvironment(upstreamRoot))
   }
   runPnpm(['mobile:bundle:ios'], upstreamRoot, upstreamBuildEnvironment(upstreamRoot))
 
   const bundleRoot = resolve(upstreamRoot, 'release', 'mobile', 'ios', 'www')
-  validateManifest(lock, JSON.parse(await readFile(resolve(bundleRoot, manifestName), 'utf8')))
-  await safeReplaceWebRoot(bundleRoot)
+  const manifest = validateManifest(lock, JSON.parse(await readFile(resolve(bundleRoot, manifestName), 'utf8')))
+  await verifyBundleTree(bundleRoot, manifest)
+  await safeReplaceWebRoot(bundleRoot, wrapperRoot, manifest)
   runPnpm(['exec', 'cap', 'sync', 'ios'], wrapperRoot, wrapperCommandEnvironment())
   console.log(`Synchronized iOS wrapper from KOD commit ${lock.commit}`)
 }

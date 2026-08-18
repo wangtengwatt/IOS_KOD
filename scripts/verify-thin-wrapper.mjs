@@ -35,6 +35,15 @@ try {
   failures.push(`invalid kod-upstream.lock.json: ${error instanceof Error ? error.message : String(error)}`)
 }
 
+try {
+  const lockText = readFileSync(resolve(root, 'pnpm-lock.yaml'), 'utf8')
+  const importerBlock = lockText.match(/\nimporters:\n([\s\S]*?)\npackages:/)?.[1] || ''
+  const importers = [...importerBlock.matchAll(/^  ([^\s].*):$/gm)].map((match) => match[1])
+  if (importers.length !== 1 || importers[0] !== '.') failures.push('pnpm-lock.yaml must contain only importer .')
+} catch (error) {
+  failures.push(`unable to validate pnpm-lock.yaml: ${error instanceof Error ? error.message : String(error)}`)
+}
+
 if (failures.length) {
   console.error(`Thin-wrapper verification failed:\n- ${failures.join('\n- ')}`)
   process.exit(1)

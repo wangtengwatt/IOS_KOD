@@ -32,6 +32,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm sync:ios
+        env:
+          KOD_UPSTREAM_READ_TOKEN: ${{ secrets.KOD_RELEASE_READ_TOKEN }}
       - run: pnpm verify:wrapper
       - run: pnpm verify:ios
       - working-directory: ios/App
@@ -61,6 +63,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm sync:ios
+        env:
+          KOD_UPSTREAM_READ_TOKEN: ${{ secrets.KOD_RELEASE_READ_TOKEN }}
       - run: pnpm verify:wrapper
       - name: Verify external release prerequisites
         env:

@@ -57,6 +57,38 @@ requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyAccessedAPITypes')
 requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyCollectedDataTypeEmailAddress')
 requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyCollectedDataTypeOtherUserContent')
 requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyCollectedDataTypePhotosorVideos')
+for (const nativeDependency of [
+  '@capacitor-community/sqlite',
+  '@capacitor/app',
+  '@capacitor/app-launcher',
+  '@capacitor/browser',
+  '@capacitor/device',
+  '@capacitor/filesystem',
+  '@capacitor/keyboard',
+  '@capacitor/share',
+  '@capacitor/splash-screen',
+  '@capacitor/toast',
+  'capacitor-plugin-safe-area',
+  'capacitor-stream-http',
+]) {
+  requireText('ios/App/Podfile', `node_modules/${nativeDependency}`)
+}
+for (const pluginClass of [
+  'CapacitorSQLitePlugin',
+  'AppPlugin',
+  'AppLauncherPlugin',
+  'CAPBrowserPlugin',
+  'DevicePlugin',
+  'FilesystemPlugin',
+  'KeyboardPlugin',
+  'SharePlugin',
+  'SplashScreenPlugin',
+  'ToastPlugin',
+  'SafeAreaPlugin',
+  'StreamHttpPlugin',
+]) {
+  requireText('ios/App/App/capacitor.config.json', pluginClass)
+}
 requireFile('docs/ios/apple-app-site-association.json')
 requireFile('LICENSE')
 

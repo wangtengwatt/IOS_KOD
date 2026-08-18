@@ -135,7 +135,11 @@ public final class StoreKitPlugin: CAPPlugin, CAPBridgedPlugin {
         var values: [JSObject] = []
         for await verification in Transaction.currentEntitlements {
             if case .verified(let transaction) = verification {
-                values.append(transactionObject(transaction, signedTransaction: verification.jwsRepresentation))
+                values.append(transactionObject(
+                    transaction,
+                    signedTransaction: verification.jwsRepresentation,
+                    needsFinish: false
+                ))
             }
         }
         return values
@@ -158,13 +162,21 @@ public final class StoreKitPlugin: CAPPlugin, CAPBridgedPlugin {
         return value
     }
 
-    private func transactionObject(_ transaction: Transaction, signedTransaction: String) -> JSObject {
+    private func transactionObject(
+        _ transaction: Transaction,
+        signedTransaction: String,
+        needsFinish: Bool = true
+    ) -> JSObject {
         var value: JSObject = [
             "transactionId": String(transaction.id),
             "originalTransactionId": String(transaction.originalID),
             "productId": transaction.productID,
-            "signedTransaction": signedTransaction
+            "signedTransaction": signedTransaction,
+            "needsFinish": needsFinish
         ]
+        if let appAccountToken = transaction.appAccountToken {
+            value["appAccountToken"] = appAccountToken.uuidString.lowercased()
+        }
         if let expirationDate = transaction.expirationDate {
             value["expirationDate"] = expirationDate.timeIntervalSince1970 * 1000
         }

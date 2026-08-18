@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "repository": "https://gitlab.kaiweb.org/KAI/oD/KoD/kod.git",
-  "commit": "19c08229dc59eb428fa77308aac6881813afbe75",
-  "releaseTrain": "kod-2026.08.18.1"
+  "commit": "80001e542c6d9d2c7aaf6ee311fd0461bb6ae64d",
+  "releaseTrain": "kod-2026.08.18.2"
 }

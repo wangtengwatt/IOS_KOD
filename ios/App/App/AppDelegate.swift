@@ -41,14 +41,25 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, continue userActivity: NSUserActivity, restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void) -> Bool {
         // Called when the app was launched with an activity, including Universal Links.
+        let handledKaiCallback: Bool
         if let url = userActivity.webpageURL,
            url.host == "kod.kai.com",
            url.path == "/auth/ios/callback" {
-            NotificationCenter.default.post(name: .kodKaiIdentityCallback, object: url)
+            let captured = KaiIdentityPlugin.capturePendingCallback(url)
+            if captured {
+                NotificationCenter.default.post(name: .kodKaiIdentityCallback, object: url)
+            }
+            handledKaiCallback = true
+        } else {
+            handledKaiCallback = false
         }
         // Feel free to add additional processing here, but if you want the App API to support
         // tracking app url opens, make sure to keep this call
-        return ApplicationDelegateProxy.shared.application(application, continue: userActivity, restorationHandler: restorationHandler)
+        return handledKaiCallback || ApplicationDelegateProxy.shared.application(
+            application,
+            continue: userActivity,
+            restorationHandler: restorationHandler
+        )
     }
 
 }

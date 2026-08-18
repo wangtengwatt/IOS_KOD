@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
-import { validateLock, validateManifest } from './sync-upstream.mjs'
+import { validateLock, validateManifest, validateNativePluginOwnership } from './sync-upstream.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const release = process.argv.includes('--release')
@@ -57,22 +57,6 @@ requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyAccessedAPITypes')
 requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyCollectedDataTypeEmailAddress')
 requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyCollectedDataTypeOtherUserContent')
 requireText('ios/App/App/PrivacyInfo.xcprivacy', 'NSPrivacyCollectedDataTypePhotosorVideos')
-for (const nativeDependency of [
-  '@capacitor-community/sqlite',
-  '@capacitor/app',
-  '@capacitor/app-launcher',
-  '@capacitor/browser',
-  '@capacitor/device',
-  '@capacitor/filesystem',
-  '@capacitor/keyboard',
-  '@capacitor/share',
-  '@capacitor/splash-screen',
-  '@capacitor/toast',
-  'capacitor-plugin-safe-area',
-  'capacitor-stream-http',
-]) {
-  requireText('ios/App/Podfile', `node_modules/${nativeDependency}`)
-}
 for (const pluginClass of [
   'CapacitorSQLitePlugin',
   'AppPlugin',
@@ -91,11 +75,18 @@ for (const pluginClass of [
 }
 requireFile('docs/ios/apple-app-site-association.json')
 requireFile('LICENSE')
+if (existsSync(absolute('www/ios-preview.html'))) failures.push('production www must not contain ios-preview.html')
 
 try {
   const lock = validateLock(JSON.parse(readFileSync(absolute('kod-upstream.lock.json'), 'utf8')))
   const manifest = JSON.parse(readFileSync(absolute('www/kod-build-manifest.json'), 'utf8'))
-  validateManifest(lock, manifest)
+  const validatedManifest = validateManifest(lock, manifest)
+  validateNativePluginOwnership(
+    validatedManifest,
+    JSON.parse(readFileSync(absolute('package.json'), 'utf8')),
+    readFileSync(absolute('ios/App/Podfile'), 'utf8'),
+    JSON.parse(readFileSync(absolute('ios/App/App/capacitor.config.json'), 'utf8')),
+  )
 } catch (error) {
   failures.push(`upstream bundle is missing or invalid: ${error instanceof Error ? error.message : String(error)}`)
 }

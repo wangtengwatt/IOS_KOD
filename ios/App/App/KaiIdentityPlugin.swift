@@ -15,11 +15,18 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
     public let jsName = "KaiIdentity"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "login", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "resumePendingLogin", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "cancel", returnType: CAPPluginReturnPromise)
     ]
 
     private static let requiredRedirectHost = "kod.kai.com"
     private static let requiredRedirectPath = "/auth/ios/callback"
+    private static let reservedAuthorizationParameters: Set<String> = [
+        "response_type", "client_id", "redirect_uri", "scope", "code_challenge", "code_challenge_method", "state"
+    ]
+    private static let pendingLoginAccount = "kai.pending.login"
+    private static let pendingCallbackAccount = "kai.pending.callback"
+    private static let pendingTTL: TimeInterval = 300
     private var session: ASWebAuthenticationSession?
     private var legacyPending: LegacyPending?
     private var legacyTimeout: DispatchWorkItem?
@@ -29,6 +36,13 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
         let verifier: String
         let state: String
         let call: CAPPluginCall
+    }
+
+    private struct PendingLogin: Codable {
+        let config: Config
+        let verifier: String
+        let state: String
+        let createdAt: TimeInterval
     }
 
     public override func load() {
@@ -54,6 +68,13 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
             let state = try randomURLSafeString(byteCount: 32)
             let challenge = base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
             let authorizationURL = try makeAuthorizationURL(config: config, state: state, challenge: challenge)
+            try Self.savePendingLogin(PendingLogin(
+                config: config,
+                verifier: verifier,
+                state: state,
+                createdAt: Date().timeIntervalSince1970
+            ))
+            Self.deletePendingCallback()
             if #available(iOS 17.4, *) {
                 startWebAuthenticationSession(
                     authorizationURL: authorizationURL,
@@ -76,9 +97,40 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
         }
     }
 
+    @objc public func resumePendingLogin(_ call: CAPPluginCall) {
+        do {
+            guard let pending = try Self.loadPendingLogin(),
+                  let callbackURL = try Self.loadPendingCallback() else {
+                call.resolve(["pending": false])
+                return
+            }
+            guard Date().timeIntervalSince1970 - pending.createdAt <= Self.pendingTTL else {
+                Self.deletePendingLogin()
+                Self.deletePendingCallback()
+                call.resolve(["pending": true, "success": false, "error": "KAI Identity login expired; please retry"])
+                return
+            }
+            Self.deletePendingLogin()
+            Self.deletePendingCallback()
+            complete(
+                config: pending.config,
+                verifier: pending.verifier,
+                state: pending.state,
+                callbackURL: callbackURL,
+                call: call
+            )
+        } catch {
+            Self.deletePendingLogin()
+            Self.deletePendingCallback()
+            call.resolve(["pending": true, "success": false, "error": error.localizedDescription])
+        }
+    }
+
     @objc public func cancel(_ call: CAPPluginCall) {
         session?.cancel()
         session = nil
+        Self.deletePendingLogin()
+        Self.deletePendingCallback()
         if let pending = legacyPending {
             clearLegacyPending()
             pending.call.resolve(["success": false, "error": "KAI Identity 登录已取消"])
@@ -104,13 +156,19 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
             self.session = nil
             if let authError = error as? ASWebAuthenticationSessionError,
                authError.code == .canceledLogin {
+                Self.deletePendingLogin()
+                Self.deletePendingCallback()
                 call.resolve(["success": false, "error": "KAI Identity 登录已取消"])
                 return
             }
             if let error {
+                Self.deletePendingLogin()
+                Self.deletePendingCallback()
                 call.resolve(["success": false, "error": error.localizedDescription])
                 return
             }
+            Self.deletePendingLogin()
+            Self.deletePendingCallback()
             self.complete(config: config, verifier: verifier, state: state, callbackURL: callbackURL, call: call)
         }
         authSession.presentationContextProvider = self
@@ -118,6 +176,8 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
         session = authSession
         if !authSession.start() {
             session = nil
+            Self.deletePendingLogin()
+            Self.deletePendingCallback()
             call.resolve(["success": false, "error": "无法启动 KAI Identity 登录会话"])
         }
     }
@@ -137,6 +197,8 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
         let timeout = DispatchWorkItem { [weak self] in
             guard let self, let pending = self.legacyPending else { return }
             self.clearLegacyPending()
+            Self.deletePendingLogin()
+            Self.deletePendingCallback()
             pending.call.resolve(["success": false, "error": "KAI Identity 登录超时，请重试"])
         }
         legacyTimeout = timeout
@@ -145,6 +207,8 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
             UIApplication.shared.open(authorizationURL, options: [:]) { [weak self] accepted in
                 guard !accepted, let self, let pending = self.legacyPending else { return }
                 self.clearLegacyPending()
+                Self.deletePendingLogin()
+                Self.deletePendingCallback()
                 pending.call.resolve(["success": false, "error": "无法打开 KAI Identity 登录页面"])
             }
         }
@@ -153,6 +217,8 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
     @objc private func receiveLegacyUniversalLink(_ notification: Notification) {
         guard let url = notification.object as? URL, let pending = legacyPending else { return }
         clearLegacyPending()
+        Self.deletePendingLogin()
+        Self.deletePendingCallback()
         complete(
             config: pending.config,
             verifier: pending.verifier,
@@ -194,12 +260,87 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
         return ASPresentationAnchor()
     }
 
-    private struct Config {
+    private struct Config: Codable {
         let clientId: String
+        let issuer: URL
         let authorizationEndpoint: URL
         let tokenEndpoint: URL
         let redirectUri: String
         let scope: String
+    }
+
+    static func capturePendingCallback(_ url: URL) -> Bool {
+        guard url.scheme == "https",
+              url.host == requiredRedirectHost,
+              url.path == requiredRedirectPath else { return false }
+        do {
+            try writeKeychain(Data(url.absoluteString.utf8), account: pendingCallbackAccount)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private static func savePendingLogin(_ pending: PendingLogin) throws {
+        try writeKeychain(JSONEncoder().encode(pending), account: pendingLoginAccount)
+    }
+
+    private static func loadPendingLogin() throws -> PendingLogin? {
+        guard let data = try readKeychain(account: pendingLoginAccount) else { return nil }
+        return try JSONDecoder().decode(PendingLogin.self, from: data)
+    }
+
+    private static func loadPendingCallback() throws -> URL? {
+        guard let data = try readKeychain(account: pendingCallbackAccount),
+              let value = String(data: data, encoding: .utf8),
+              let url = URL(string: value) else { return nil }
+        return url
+    }
+
+    private static func deletePendingLogin() {
+        deleteKeychain(account: pendingLoginAccount)
+    }
+
+    private static func deletePendingCallback() {
+        deleteKeychain(account: pendingCallbackAccount)
+    }
+
+    private static func writeKeychain(_ data: Data, account: String) throws {
+        deleteKeychain(account: account)
+        let status = SecItemAdd([
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: Bundle.main.bundleIdentifier ?? "com.kod.ios",
+            kSecAttrAccount: account,
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecValueData: data
+        ] as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw PluginError.invalidConfig("Unable to save KAI login state securely (\(status))")
+        }
+    }
+
+    private static func readKeychain(account: String) throws -> Data? {
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching([
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: Bundle.main.bundleIdentifier ?? "com.kod.ios",
+            kSecAttrAccount: account,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ] as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw PluginError.invalidConfig("Unable to read KAI login state securely (\(status))")
+        }
+        return data
+    }
+
+    private static func deleteKeychain(account: String) {
+        SecItemDelete([
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: Bundle.main.bundleIdentifier ?? "com.kod.ios",
+            kSecAttrAccount: account
+        ] as CFDictionary)
     }
 
     private enum PluginError: LocalizedError {
@@ -226,11 +367,22 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
         guard let clientId = nonEmpty(value["clientId"] as? String) else {
             throw PluginError.invalidConfig("缺少 clientId")
         }
+        guard let issuer = secureURL(value["issuer"] as? String) else {
+            throw PluginError.invalidConfig("issuer 必须使用 HTTPS")
+        }
         guard let authorizationEndpoint = secureURL(value["authorizationEndpoint"] as? String) else {
             throw PluginError.invalidConfig("authorizationEndpoint 必须使用 HTTPS")
         }
         guard let tokenEndpoint = secureURL(value["tokenEndpoint"] as? String) else {
             throw PluginError.invalidConfig("tokenEndpoint 必须使用 HTTPS")
+        }
+        guard authorizationEndpoint.scheme == issuer.scheme,
+              authorizationEndpoint.host == issuer.host,
+              authorizationEndpoint.port == issuer.port,
+              tokenEndpoint.scheme == issuer.scheme,
+              tokenEndpoint.host == issuer.host,
+              tokenEndpoint.port == issuer.port else {
+            throw PluginError.invalidConfig("OAuth endpoints must use the trusted issuer origin")
         }
         guard let redirectUri = nonEmpty(value["redirectUri"] as? String),
               let redirectURL = URL(string: redirectUri),
@@ -244,6 +396,7 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
         }
         return Config(
             clientId: clientId,
+            issuer: issuer,
             authorizationEndpoint: authorizationEndpoint,
             tokenEndpoint: tokenEndpoint,
             redirectUri: redirectUri,
@@ -255,7 +408,9 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
         guard var parts = URLComponents(url: config.authorizationEndpoint, resolvingAgainstBaseURL: false) else {
             throw PluginError.invalidConfig("authorizationEndpoint 无法解析")
         }
-        var queryItems = parts.queryItems ?? []
+        var queryItems = (parts.queryItems ?? []).filter {
+            !Self.reservedAuthorizationParameters.contains($0.name)
+        }
         queryItems.append(contentsOf: [
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "client_id", value: config.clientId),
@@ -280,7 +435,14 @@ public final class KaiIdentityPlugin: CAPPlugin, CAPBridgedPlugin, ASWebAuthenti
               let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             throw PluginError.invalidCallback("回调地址不匹配")
         }
-        let values = Dictionary(uniqueKeysWithValues: (parts.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        var values: [String: String] = [:]
+        let protectedParameters: Set<String> = ["state", "code", "error", "error_description"]
+        for item in parts.queryItems ?? [] {
+            if protectedParameters.contains(item.name), values[item.name] != nil {
+                throw PluginError.invalidCallback("duplicate OAuth callback parameter: \(item.name)")
+            }
+            values[item.name] = item.value ?? ""
+        }
         if let oauthError = values["error"], !oauthError.isEmpty {
             throw PluginError.invalidCallback(values["error_description"] ?? oauthError)
         }

@@ -10,6 +10,9 @@ import {
   managedDependencyInstallPolicy,
   runCommand,
   safeReplaceWebRoot,
+  scrubNonGitEnvironment,
+  recoverWebRootBackup,
+  validateNativePluginOwnership,
   validateManifest,
   verifyBundleTree,
 } from './sync-upstream.mjs'
@@ -30,6 +33,7 @@ const manifestFor = (files) => ({
   sourceCommit: commit,
   sourceVersion: '0.0.1',
   files,
+  nativePlugins: [],
   rendererSha256: sha256(files.map((file) => `${file.path}\0${file.bytes}\0${file.sha256}\n`).join('')),
 })
 const file = (path, contents) => ({ path, bytes: Buffer.byteLength(contents), sha256: sha256(contents) })
@@ -108,10 +112,20 @@ test('replacement verifies the temporary copy before safely swapping www', async
 
 test('protected upstream Git auth stays in child env and is redacted from diagnostics', () => {
   const token = 'kod-read-token-super-secret'
-  const { env, secrets } = gitAuthenticationEnvironment({}, token)
+  const { env, secrets } = gitAuthenticationEnvironment(
+    {
+      PATH: 'safe',
+      KOD_UPSTREAM_READ_TOKEN: token,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.attacker.invalid.extraheader',
+      GIT_CONFIG_VALUE_0: 'unsafe',
+    },
+    token,
+  )
   assert.equal(env.GIT_CONFIG_COUNT, '1')
   assert.equal(env.GIT_CONFIG_KEY_0, 'http.https://gitlab.kaiweb.org/.extraheader')
   assert.ok(env.GIT_CONFIG_VALUE_0.includes(token))
+  assert.equal(env.KOD_UPSTREAM_READ_TOKEN, undefined)
   assert.deepEqual(secrets, [token])
   assert.throws(
     () => runCommand(process.execPath, ['-e', `console.error('${token}'); process.exit(2)`], process.cwd(), env, secrets),
@@ -119,7 +133,51 @@ test('protected upstream Git auth stays in child env and is redacted from diagno
   )
 })
 
+test('install, build, and Capacitor child fixtures never inherit upstream auth variables', () => {
+  for (const child of ['install', 'build', 'cap']) {
+    const clean = scrubNonGitEnvironment({
+      PATH: `safe-${child}`,
+      KOD_UPSTREAM_READ_TOKEN: 'secret',
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.x.extraheader',
+      GIT_CONFIG_VALUE_0: 'PRIVATE-TOKEN: secret',
+    })
+    assert.deepEqual(clean, { PATH: `safe-${child}` })
+  }
+})
+
+test('replacement recovers a sole crash backup when www is missing', async () => {
+  const wrapper = await mkdtemp(join(tmpdir(), 'kod-ios-recover-'))
+  const backup = join(wrapper, '.www-backup-crash')
+  await mkdir(backup)
+  await writeFile(join(backup, 'last-good.js'), 'ok')
+  await recoverWebRootBackup(wrapper)
+  assert.equal(await readFile(join(wrapper, 'www', 'last-good.js'), 'utf8'), 'ok')
+  await assert.rejects(readFile(join(backup, 'last-good.js')), /ENOENT/)
+})
+
 test('managed upstream always performs a frozen install while configured local upstream may reuse dependencies', () => {
   assert.equal(managedDependencyInstallPolicy(true), 'frozen-install')
   assert.equal(managedDependencyInstallPolicy(false), 'reuse-configured-upstream')
+})
+
+test('canonical manifest drives wrapper dependency, Pod, and generated registration ownership', () => {
+  const manifest = { ...manifestFor([]), nativePlugins: ['@capacitor/app', 'capacitor-stream-http'] }
+  const packageJson = { dependencies: { '@capacitor/app': '7.1.2', 'capacitor-stream-http': '0.1.0' } }
+  const podfile = "node_modules/@capacitor/app\nnode_modules/capacitor-stream-http"
+  const nativeConfig = { packageClassList: ['AppPlugin', 'StreamHttpPlugin'] }
+
+  assert.doesNotThrow(() => validateNativePluginOwnership(manifest, packageJson, podfile, nativeConfig))
+  assert.throws(
+    () => validateNativePluginOwnership(manifest, { dependencies: {} }, podfile, nativeConfig),
+    /missing canonical native plugin dependency/i,
+  )
+  assert.throws(
+    () => validateNativePluginOwnership(manifest, packageJson, '', nativeConfig),
+    /Podfile/i,
+  )
+  assert.throws(
+    () => validateNativePluginOwnership(manifest, packageJson, podfile, { packageClassList: ['AppPlugin'] }),
+    /registration/i,
+  )
 })

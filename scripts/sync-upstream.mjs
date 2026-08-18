@@ -58,6 +58,18 @@ export function validateManifest(lockValue, value) {
     throw new Error('manifest rendererSha256 must be a lowercase SHA-256 digest')
   }
   if (!Array.isArray(manifest.files)) throw new Error('manifest files must be an array')
+  if (!Array.isArray(manifest.nativePlugins) || manifest.nativePlugins.some((name) => typeof name !== 'string')) {
+    throw new Error('manifest nativePlugins must be an array of package names')
+  }
+  for (let index = 0; index < manifest.nativePlugins.length; index += 1) {
+    const name = manifest.nativePlugins[index]
+    if (!/^(?:@[-a-z0-9._]+\/)?[-a-z0-9._]+$/.test(name)) {
+      throw new Error('manifest nativePlugins contains an invalid package name')
+    }
+    if (index > 0 && name <= manifest.nativePlugins[index - 1]) {
+      throw new Error('manifest nativePlugins must be unique and sorted')
+    }
+  }
   let previousPath = null
   for (const file of manifest.files) {
     requireObject(file, 'manifest file')
@@ -88,6 +100,27 @@ export function validateManifest(lockValue, value) {
   return manifest
 }
 
+export function validateNativePluginOwnership(manifestValue, packageValue, podfile, nativeConfigValue) {
+  const manifest = requireObject(manifestValue, 'iOS build manifest')
+  const packageJson = requireObject(packageValue, 'wrapper package.json')
+  const dependencies = requireObject(packageJson.dependencies, 'wrapper dependencies')
+  const nativeConfig = requireObject(nativeConfigValue, 'generated native config')
+  if (!Array.isArray(nativeConfig.packageClassList)) {
+    throw new Error('generated native registration list is missing')
+  }
+  for (const plugin of manifest.nativePlugins) {
+    if (typeof dependencies[plugin] !== 'string' || !dependencies[plugin]) {
+      throw new Error(`wrapper is missing canonical native plugin dependency: ${plugin}`)
+    }
+    if (!podfile.includes(`node_modules/${plugin}`)) {
+      throw new Error(`Podfile is missing canonical native plugin: ${plugin}`)
+    }
+  }
+  if (nativeConfig.packageClassList.length !== manifest.nativePlugins.length) {
+    throw new Error('generated native plugin registration count does not match canonical manifest')
+  }
+}
+
 function sha256(contents) {
   return createHash('sha256').update(contents).digest('hex')
 }
@@ -97,7 +130,7 @@ function redact(value, secrets) {
 }
 
 export function gitAuthenticationEnvironment(baseEnvironment, token) {
-  const env = { ...baseEnvironment }
+  const env = scrubNonGitEnvironment(baseEnvironment)
   if (!token) return { env, secrets: [] }
   if (typeof token !== 'string' || /[\r\n]/.test(token)) throw new Error('KOD upstream read token is invalid')
   const count = Number.parseInt(env.GIT_CONFIG_COUNT || '0', 10)
@@ -106,6 +139,14 @@ export function gitAuthenticationEnvironment(baseEnvironment, token) {
   env[`GIT_CONFIG_KEY_${count}`] = 'http.https://gitlab.kaiweb.org/.extraheader'
   env[`GIT_CONFIG_VALUE_${count}`] = `PRIVATE-TOKEN: ${token}`
   return { env, secrets: [token] }
+}
+
+export function scrubNonGitEnvironment(baseEnvironment) {
+  return Object.fromEntries(
+    Object.entries(baseEnvironment).filter(
+      ([key]) => key !== 'KOD_UPSTREAM_READ_TOKEN' && !key.startsWith('GIT_CONFIG_'),
+    ),
+  )
 }
 
 export function managedDependencyInstallPolicy(managed) {
@@ -134,29 +175,32 @@ export function runCommand(command, arguments_, cwd, env = process.env, secrets 
 }
 
 function runPnpm(arguments_, cwd, env = process.env) {
+  const childEnvironment = scrubNonGitEnvironment(env)
   if (process.platform === 'win32') {
     const corepack = resolve(dirname(process.execPath), 'node_modules', 'corepack', 'dist', 'corepack.js')
-    if (existsSync(corepack)) return runCommand(process.execPath, [corepack, 'pnpm', ...arguments_], cwd, env)
+    if (existsSync(corepack)) return runCommand(process.execPath, [corepack, 'pnpm', ...arguments_], cwd, childEnvironment)
   }
-  return runCommand(pnpm, arguments_, cwd, env)
+  return runCommand(pnpm, arguments_, cwd, childEnvironment)
 }
 
 function upstreamBuildEnvironment(upstreamRoot) {
-  if (process.platform !== 'win32') return process.env
+  const baseEnvironment = scrubNonGitEnvironment(process.env)
+  if (process.platform !== 'win32') return baseEnvironment
   const preload = resolve(upstreamRoot, 'scripts', 'platform-release', 'test-support', 'windows-node-userinfo-shim.cjs')
-  if (!existsSync(preload)) return process.env
+  if (!existsSync(preload)) return baseEnvironment
   return {
-    ...process.env,
+    ...baseEnvironment,
     npm_config_node_options: `--max-old-space-size=4096 --require="${preload.replaceAll('\\', '/')}"`,
   }
 }
 
 function wrapperCommandEnvironment() {
-  if (process.platform !== 'win32') return process.env
+  const baseEnvironment = scrubNonGitEnvironment(process.env)
+  if (process.platform !== 'win32') return baseEnvironment
   const preload = resolve(wrapperRoot, 'scripts', 'windows-node-userinfo-shim.cjs')
-  if (!existsSync(preload)) return process.env
+  if (!existsSync(preload)) return baseEnvironment
   return {
-    ...process.env,
+    ...baseEnvironment,
     npm_config_node_options: `--require="${preload.replaceAll('\\', '/')}"`,
   }
 }
@@ -273,8 +317,25 @@ async function assertSafeWebRoot(wrapperDirectory, target) {
   return canonicalWrapperRoot
 }
 
+export async function recoverWebRootBackup(wrapperDirectory = wrapperRoot) {
+  const canonicalWrapperRoot = await realpath(resolve(wrapperDirectory))
+  const target = resolve(canonicalWrapperRoot, 'www')
+  if (await exists(target)) return false
+  const backups = (await readdir(canonicalWrapperRoot))
+    .filter((entry) => entry.startsWith('.www-backup-'))
+    .sort()
+  if (backups.length === 0) return false
+  if (backups.length !== 1) throw new Error('multiple www crash backups require manual recovery')
+  const backup = resolve(canonicalWrapperRoot, backups[0])
+  const metadata = await lstat(backup)
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) throw new Error('www crash backup is unsafe')
+  await rename(backup, target)
+  return true
+}
+
 export async function safeReplaceWebRoot(source, wrapperDirectory = wrapperRoot, manifest) {
   await verifyBundleTree(source, manifest)
+  await recoverWebRootBackup(wrapperDirectory)
   const canonicalWrapperRoot = await assertSafeWebRoot(wrapperDirectory, resolve(wrapperDirectory, 'www'))
   const target = resolve(canonicalWrapperRoot, 'www')
   const temporary = await mkdtemp(resolve(canonicalWrapperRoot, '.www-sync-'))
@@ -316,6 +377,12 @@ async function main() {
   await verifyBundleTree(bundleRoot, manifest)
   await safeReplaceWebRoot(bundleRoot, wrapperRoot, manifest)
   runPnpm(['exec', 'cap', 'sync', 'ios'], wrapperRoot, wrapperCommandEnvironment())
+  validateNativePluginOwnership(
+    manifest,
+    JSON.parse(await readFile(resolve(wrapperRoot, 'package.json'), 'utf8')),
+    await readFile(resolve(wrapperRoot, 'ios', 'App', 'Podfile'), 'utf8'),
+    JSON.parse(await readFile(resolve(wrapperRoot, 'ios', 'App', 'App', 'capacitor.config.json'), 'utf8')),
+  )
   console.log(`Synchronized iOS wrapper from KOD commit ${lock.commit}`)
 }
 

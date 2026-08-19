@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import process from 'node:process'
@@ -10,6 +10,81 @@ const scriptPath = fileURLToPath(import.meta.url)
 const wrapperRoot = resolve(dirname(scriptPath), '..')
 const manifestName = 'kod-build-manifest.json'
 const pnpm = process.platform === 'win32' ? 'pnpm.CMD' : 'pnpm'
+
+export const IOS_PLUGIN_CONTRACT = Object.freeze([
+  Object.freeze({
+    packageName: '@capacitor-community/sqlite',
+    version: '7.0.3',
+    podName: 'CapacitorCommunitySqlite',
+    className: 'CapacitorSQLitePlugin',
+  }),
+  Object.freeze({ packageName: '@capacitor/app', version: '7.1.2', podName: 'CapacitorApp', className: 'AppPlugin' }),
+  Object.freeze({
+    packageName: '@capacitor/app-launcher',
+    version: '7.0.4',
+    podName: 'CapacitorAppLauncher',
+    className: 'AppLauncherPlugin',
+  }),
+  Object.freeze({
+    packageName: '@capacitor/browser',
+    version: '7.0.5',
+    podName: 'CapacitorBrowser',
+    className: 'CAPBrowserPlugin',
+  }),
+  Object.freeze({ packageName: '@capacitor/device', version: '7.0.5', podName: 'CapacitorDevice', className: 'DevicePlugin' }),
+  Object.freeze({
+    packageName: '@capacitor/filesystem',
+    version: '7.1.6',
+    podName: 'CapacitorFilesystem',
+    className: 'FilesystemPlugin',
+  }),
+  Object.freeze({
+    packageName: '@capacitor/keyboard',
+    version: '7.0.6',
+    podName: 'CapacitorKeyboard',
+    className: 'KeyboardPlugin',
+  }),
+  Object.freeze({ packageName: '@capacitor/share', version: '7.0.4', podName: 'CapacitorShare', className: 'SharePlugin' }),
+  Object.freeze({
+    packageName: '@capacitor/splash-screen',
+    version: '7.0.5',
+    podName: 'CapacitorSplashScreen',
+    className: 'SplashScreenPlugin',
+  }),
+  Object.freeze({ packageName: '@capacitor/toast', version: '7.0.4', podName: 'CapacitorToast', className: 'ToastPlugin' }),
+  Object.freeze({
+    packageName: 'capacitor-plugin-safe-area',
+    version: '4.0.3',
+    podName: 'CapacitorPluginSafeArea',
+    className: 'SafeAreaPlugin',
+  }),
+  Object.freeze({
+    packageName: 'capacitor-stream-http',
+    version: '0.1.0',
+    podName: 'CapacitorStreamHttp',
+    className: 'StreamHttpPlugin',
+  }),
+])
+
+export const IOS_CUSTOM_SWIFT_PLUGIN_CLASSES = Object.freeze([
+  'KaiIdentityPlugin',
+  'SecureStoragePlugin',
+  'StoreKitPlugin',
+  'NotificationPlugin',
+])
+
+function parsePodDeclarations(podfile) {
+  if (typeof podfile !== 'string') throw new Error('Podfile must be text')
+  const declarations = new Map()
+  for (const line of podfile.split(/\r?\n/)) {
+    const match = line.match(/^\s*pod\s+(['"])([^'"]+)\1\s*,\s*:path\s*=>\s*(['"])([^'"]+)\3\s*(?:#.*)?$/)
+    if (!match) continue
+    const [, , podName, , path] = match
+    if (declarations.has(podName)) throw new Error(`Podfile has a duplicate Pod declaration: ${podName}`)
+    declarations.set(podName, path)
+  }
+  return declarations
+}
 
 function requireObject(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`)
@@ -100,24 +175,79 @@ export function validateManifest(lockValue, value) {
   return manifest
 }
 
-export function validateNativePluginOwnership(manifestValue, packageValue, podfile, nativeConfigValue) {
+export function validateNativePluginOwnership(
+  manifestValue,
+  packageValue,
+  podfile,
+  nativeConfigValue,
+  ownershipOptions = {},
+) {
   const manifest = requireObject(manifestValue, 'iOS build manifest')
   const packageJson = requireObject(packageValue, 'wrapper package.json')
   const dependencies = requireObject(packageJson.dependencies, 'wrapper dependencies')
   const nativeConfig = requireObject(nativeConfigValue, 'generated native config')
+  const options = requireObject(ownershipOptions, 'native plugin ownership options')
+  const contractWrapperRoot = resolve(options.wrapperRoot || wrapperRoot)
+  const podfilePath = resolve(options.podfilePath || resolve(contractWrapperRoot, 'ios', 'App', 'Podfile'))
+  const podfileRelativePath = relative(contractWrapperRoot, podfilePath)
+  if (podfileRelativePath.startsWith('..') || isAbsolute(podfileRelativePath)) {
+    throw new Error('Podfile path must stay inside the iOS wrapper')
+  }
+  const expectedPackages = IOS_PLUGIN_CONTRACT.map((plugin) => plugin.packageName)
+  if (
+    !Array.isArray(manifest.nativePlugins) ||
+    manifest.nativePlugins.length !== expectedPackages.length ||
+    manifest.nativePlugins.some((packageName, index) => packageName !== expectedPackages[index])
+  ) {
+    throw new Error('canonical native plugin package list does not match the exact iOS plugin contract')
+  }
   if (!Array.isArray(nativeConfig.packageClassList)) {
     throw new Error('generated native registration list is missing')
   }
+  const podDeclarations = parsePodDeclarations(podfile)
   for (const plugin of manifest.nativePlugins) {
     if (typeof dependencies[plugin] !== 'string' || !dependencies[plugin]) {
       throw new Error(`wrapper is missing canonical native plugin dependency: ${plugin}`)
     }
-    if (!podfile.includes(`node_modules/${plugin}`)) {
-      throw new Error(`Podfile is missing canonical native plugin: ${plugin}`)
+    const expectedVersion = IOS_PLUGIN_CONTRACT.find((entry) => entry.packageName === plugin)?.version
+    if (dependencies[plugin] !== expectedVersion) {
+      throw new Error(`wrapper native plugin version mismatch for ${plugin}: expected ${expectedVersion}`)
+    }
+    const contract = IOS_PLUGIN_CONTRACT.find((entry) => entry.packageName === plugin)
+    const podPath = podDeclarations.get(contract.podName)
+    const expectedPodPath = resolve(contractWrapperRoot, 'node_modules', plugin)
+    const declaredPodPath = typeof podPath === 'string' ? resolve(dirname(podfilePath), podPath) : null
+    if (declaredPodPath !== expectedPodPath) {
+      throw new Error(`Podfile native plugin path must resolve inside the wrapper node_modules: ${plugin}`)
     }
   }
-  if (nativeConfig.packageClassList.length !== manifest.nativePlugins.length) {
-    throw new Error('generated native plugin registration count does not match canonical manifest')
+  const pluginContract = new Map(IOS_PLUGIN_CONTRACT.map((plugin) => [plugin.packageName, plugin]))
+  const expectedClasses = manifest.nativePlugins.map((packageName) => pluginContract.get(packageName)?.className)
+  if (
+    expectedClasses.some((className) => !className) ||
+    nativeConfig.packageClassList.length !== expectedClasses.length ||
+    nativeConfig.packageClassList.some((className, index) => className !== expectedClasses[index])
+  ) {
+    throw new Error('generated native plugin registration classes do not match the iOS plugin contract')
+  }
+
+  const bridgeSource =
+    typeof options.bridgeSource === 'string'
+      ? options.bridgeSource
+      : readFileSync(resolve(contractWrapperRoot, 'ios', 'App', 'App', 'BridgeViewController.swift'), 'utf8')
+  const executableBridgeSource = bridgeSource
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\/\/.*$/, ''))
+    .join('\n')
+  const customClasses = [...executableBridgeSource.matchAll(/registerPluginInstance\s*\(\s*([A-Za-z_]\w*)\s*\(\s*\)\s*\)/g)].map(
+    (match) => match[1],
+  )
+  if (
+    customClasses.length !== IOS_CUSTOM_SWIFT_PLUGIN_CLASSES.length ||
+    customClasses.some((className, index) => className !== IOS_CUSTOM_SWIFT_PLUGIN_CLASSES[index])
+  ) {
+    throw new Error('BridgeViewController custom Swift plugin registrations do not match the exact iOS contract')
   }
 }
 
@@ -139,6 +269,17 @@ export function gitAuthenticationEnvironment(baseEnvironment, token) {
   env[`GIT_CONFIG_KEY_${count}`] = 'http.https://gitlab.kaiweb.org/.extraheader'
   env[`GIT_CONFIG_VALUE_${count}`] = `PRIVATE-TOKEN: ${token}`
   return { env, secrets: [token] }
+}
+
+export function gitEnvironmentForOperation(operation, baseEnvironment = process.env, authenticationToken) {
+  const isAuthenticatedNetworkOperation = operation === 'clone' || operation === 'fetch'
+  if (authenticationToken && !isAuthenticatedNetworkOperation) {
+    throw new Error('Git authentication is permitted only for clone and fetch operations')
+  }
+  if (isAuthenticatedNetworkOperation && authenticationToken) {
+    return gitAuthenticationEnvironment(baseEnvironment, authenticationToken)
+  }
+  return { env: scrubNonGitEnvironment(baseEnvironment), secrets: [] }
 }
 
 export function scrubNonGitEnvironment(baseEnvironment) {
@@ -172,6 +313,19 @@ export function runCommand(command, arguments_, cwd, env = process.env, secrets 
     )
   }
   return redact(result.stdout.trim(), secrets)
+}
+
+export function runGit(arguments_, cwd, options = {}) {
+  if (!Array.isArray(arguments_) || typeof arguments_[0] !== 'string' || !arguments_[0]) {
+    throw new Error('Git arguments must start with an operation')
+  }
+  const gitOptions = requireObject(options, 'Git command options')
+  const environment = gitEnvironmentForOperation(
+    arguments_[0],
+    gitOptions.baseEnvironment || process.env,
+    gitOptions.authenticationToken,
+  )
+  return runCommand('git', arguments_, cwd, environment.env, environment.secrets)
 }
 
 function runPnpm(arguments_, cwd, env = process.env) {
@@ -218,37 +372,33 @@ async function exists(path) {
 async function prepareManagedUpstream(lock) {
   const cacheRoot = resolve(wrapperRoot, '.kod-upstream')
   const upstreamRoot = resolve(cacheRoot, 'kod')
-  const authentication = gitAuthenticationEnvironment(process.env, process.env.KOD_UPSTREAM_READ_TOKEN)
+  const authenticationToken = process.env.KOD_UPSTREAM_READ_TOKEN
   if (!(await exists(upstreamRoot))) {
     await mkdir(cacheRoot, { recursive: true })
-    runCommand(
-      'git',
+    runGit(
       ['clone', '--no-checkout', lock.repository, upstreamRoot],
       wrapperRoot,
-      authentication.env,
-      authentication.secrets,
+      { authenticationToken },
     )
   } else {
-    const remote = runCommand('git', ['remote', 'get-url', 'origin'], upstreamRoot)
+    const remote = runGit(['remote', 'get-url', 'origin'], upstreamRoot)
     if (remote !== lock.repository) throw new Error('cached upstream origin does not match lock repository')
   }
 
-  runCommand(
-    'git',
+  runGit(
     ['fetch', '--prune', 'origin', lock.commit],
     upstreamRoot,
-    authentication.env,
-    authentication.secrets,
+    { authenticationToken },
   )
-  runCommand('git', ['checkout', '--detach', lock.commit], upstreamRoot)
+  runGit(['checkout', '--detach', lock.commit], upstreamRoot)
   return upstreamRoot
 }
 
 async function assertExactHead(upstreamRoot, commit) {
   const requestedRoot = await realpath(resolve(upstreamRoot))
-  const gitRoot = await realpath(resolve(runCommand('git', ['rev-parse', '--show-toplevel'], requestedRoot)))
+  const gitRoot = await realpath(resolve(runGit(['rev-parse', '--show-toplevel'], requestedRoot)))
   if (gitRoot !== requestedRoot) throw new Error('KOD upstream directory must be its Git top level')
-  const head = runCommand('git', ['rev-parse', 'HEAD'], requestedRoot)
+  const head = runGit(['rev-parse', 'HEAD'], requestedRoot)
   if (head !== commit) throw new Error(`upstream HEAD does not match lock commit: expected ${commit}, received ${head}`)
   return requestedRoot
 }

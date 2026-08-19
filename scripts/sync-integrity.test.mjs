@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -16,6 +16,7 @@ import {
   validateManifest,
   verifyBundleTree,
 } from './sync-upstream.mjs'
+import * as syncUpstream from './sync-upstream.mjs'
 
 const commit = '4'.repeat(40)
 const lock = {
@@ -37,6 +38,38 @@ const manifestFor = (files) => ({
   rendererSha256: sha256(files.map((file) => `${file.path}\0${file.bytes}\0${file.sha256}\n`).join('')),
 })
 const file = (path, contents) => ({ path, bytes: Buffer.byteLength(contents), sha256: sha256(contents) })
+
+const iosPluginContract = [
+  ['@capacitor-community/sqlite', '7.0.3', 'CapacitorCommunitySqlite', 'CapacitorSQLitePlugin'],
+  ['@capacitor/app', '7.1.2', 'CapacitorApp', 'AppPlugin'],
+  ['@capacitor/app-launcher', '7.0.4', 'CapacitorAppLauncher', 'AppLauncherPlugin'],
+  ['@capacitor/browser', '7.0.5', 'CapacitorBrowser', 'CAPBrowserPlugin'],
+  ['@capacitor/device', '7.0.5', 'CapacitorDevice', 'DevicePlugin'],
+  ['@capacitor/filesystem', '7.1.6', 'CapacitorFilesystem', 'FilesystemPlugin'],
+  ['@capacitor/keyboard', '7.0.6', 'CapacitorKeyboard', 'KeyboardPlugin'],
+  ['@capacitor/share', '7.0.4', 'CapacitorShare', 'SharePlugin'],
+  ['@capacitor/splash-screen', '7.0.5', 'CapacitorSplashScreen', 'SplashScreenPlugin'],
+  ['@capacitor/toast', '7.0.4', 'CapacitorToast', 'ToastPlugin'],
+  ['capacitor-plugin-safe-area', '4.0.3', 'CapacitorPluginSafeArea', 'SafeAreaPlugin'],
+  ['capacitor-stream-http', '0.1.0', 'CapacitorStreamHttp', 'StreamHttpPlugin'],
+]
+
+const validIosPluginFixture = () => ({
+  manifest: { ...manifestFor([]), nativePlugins: iosPluginContract.map(([packageName]) => packageName) },
+  packageJson: {
+    dependencies: Object.fromEntries(iosPluginContract.map(([packageName, version]) => [packageName, version])),
+  },
+  podfile: iosPluginContract
+    .map(([packageName, , podName]) => `pod '${podName}', :path => '../../node_modules/${packageName}'`)
+    .join('\n'),
+  nativeConfig: { packageClassList: iosPluginContract.map(([, , , className]) => className) },
+  bridgeSource: [
+    'bridge?.registerPluginInstance(KaiIdentityPlugin())',
+    'bridge?.registerPluginInstance(SecureStoragePlugin())',
+    'bridge?.registerPluginInstance(StoreKitPlugin())',
+    'bridge?.registerPluginInstance(NotificationPlugin())',
+  ].join('\n'),
+})
 
 test('manifest rejects traversal, absolute, backslash, duplicate, and unsorted paths', () => {
   for (const badPath of ['../x', 'a/../x', '/x', 'C:/x', 'a\\x', './x', 'a//x']) {
@@ -146,6 +179,77 @@ test('install, build, and Capacitor child fixtures never inherit upstream auth v
   }
 })
 
+test('Git authentication environment is available only to clone and fetch operations', () => {
+  assert.equal(
+    typeof syncUpstream.gitEnvironmentForOperation,
+    'function',
+    'sync-upstream must expose one operation-aware Git environment policy',
+  )
+
+  const baseEnvironment = {
+    PATH: 'safe',
+    KOD_UPSTREAM_READ_TOKEN: 'ambient-secret',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.hooksPath',
+    GIT_CONFIG_VALUE_0: 'attacker-hooks',
+  }
+  for (const operation of ['remote', 'checkout', 'rev-parse']) {
+    const { env, secrets } = syncUpstream.gitEnvironmentForOperation(operation, baseEnvironment)
+    assert.deepEqual(env, { PATH: 'safe' })
+    assert.deepEqual(secrets, [])
+  }
+  assert.throws(
+    () => syncUpstream.gitEnvironmentForOperation('checkout', baseEnvironment, 'explicit-secret'),
+    /only.*clone.*fetch/i,
+  )
+  for (const operation of ['clone', 'fetch']) {
+    const { env, secrets } = syncUpstream.gitEnvironmentForOperation(operation, baseEnvironment, 'explicit-secret')
+    assert.equal(env.KOD_UPSTREAM_READ_TOKEN, undefined)
+    assert.equal(env.GIT_CONFIG_COUNT, '1')
+    assert.equal(env.GIT_CONFIG_KEY_0, 'http.https://gitlab.kaiweb.org/.extraheader')
+    assert.match(env.GIT_CONFIG_VALUE_0, /explicit-secret/)
+    assert.deepEqual(secrets, ['explicit-secret'])
+  }
+})
+
+test('checkout hooks cannot read an upstream token or injected Git config', async () => {
+  assert.equal(typeof syncUpstream.runGit, 'function', 'sync-upstream must route Git through one scrubbed runner')
+  const repository = await mkdtemp(join(tmpdir(), 'kod-ios-git-hook-'))
+  const cleanEnvironment = scrubNonGitEnvironment(process.env)
+  try {
+    runCommand('git', ['init'], repository, cleanEnvironment)
+    runCommand('git', ['config', 'user.email', 'wrapper-test@kaiweb.org'], repository, cleanEnvironment)
+    runCommand('git', ['config', 'user.name', 'KOD Wrapper Test'], repository, cleanEnvironment)
+    await writeFile(join(repository, 'tracked.txt'), 'safe\n')
+    runCommand('git', ['add', 'tracked.txt'], repository, cleanEnvironment)
+    runCommand('git', ['commit', '-m', 'fixture'], repository, cleanEnvironment)
+
+    const hookPath = join(repository, '.git', 'hooks', 'post-checkout')
+    await writeFile(
+      hookPath,
+      [
+        '#!/bin/sh',
+        'printf \'%s|%s|%s|%s\' "$KOD_UPSTREAM_READ_TOKEN" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_VALUE_0" > checkout-hook-env.txt',
+      ].join('\n'),
+    )
+    await chmod(hookPath, 0o755)
+
+    syncUpstream.runGit(['checkout', '--detach', 'HEAD'], repository, {
+      baseEnvironment: {
+        ...process.env,
+        KOD_UPSTREAM_READ_TOKEN: 'checkout-must-not-see-this',
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'http.attacker.invalid.extraheader',
+        GIT_CONFIG_VALUE_0: 'PRIVATE-TOKEN: checkout-must-not-see-this',
+      },
+    })
+
+    assert.equal(await readFile(join(repository, 'checkout-hook-env.txt'), 'utf8'), '|||')
+  } finally {
+    await rm(repository, { recursive: true, force: true })
+  }
+})
+
 test('replacement recovers a sole crash backup when www is missing', async () => {
   const wrapper = await mkdtemp(join(tmpdir(), 'kod-ios-recover-'))
   const backup = join(wrapper, '.www-backup-crash')
@@ -162,10 +266,7 @@ test('managed upstream always performs a frozen install while configured local u
 })
 
 test('canonical manifest drives wrapper dependency, Pod, and generated registration ownership', () => {
-  const manifest = { ...manifestFor([]), nativePlugins: ['@capacitor/app', 'capacitor-stream-http'] }
-  const packageJson = { dependencies: { '@capacitor/app': '7.1.2', 'capacitor-stream-http': '0.1.0' } }
-  const podfile = "node_modules/@capacitor/app\nnode_modules/capacitor-stream-http"
-  const nativeConfig = { packageClassList: ['AppPlugin', 'StreamHttpPlugin'] }
+  const { manifest, packageJson, podfile, nativeConfig } = validIosPluginFixture()
 
   assert.doesNotThrow(() => validateNativePluginOwnership(manifest, packageJson, podfile, nativeConfig))
   assert.throws(
@@ -179,5 +280,120 @@ test('canonical manifest drives wrapper dependency, Pod, and generated registrat
   assert.throws(
     () => validateNativePluginOwnership(manifest, packageJson, podfile, { packageClassList: ['AppPlugin'] }),
     /registration/i,
+  )
+})
+
+test('native plugin validation rejects a same-size registration list with the wrong class', () => {
+  const fixture = validIosPluginFixture()
+  fixture.nativeConfig.packageClassList[0] = 'WrongSQLitePlugin'
+
+  assert.throws(
+    () =>
+      validateNativePluginOwnership(
+        fixture.manifest,
+        fixture.packageJson,
+        fixture.podfile,
+        fixture.nativeConfig,
+      ),
+    /class|registration/i,
+  )
+})
+
+test('native plugin validation requires the exact canonical iOS package set', () => {
+  const missing = validIosPluginFixture()
+  missing.manifest.nativePlugins = missing.manifest.nativePlugins.slice(1)
+  missing.nativeConfig.packageClassList = missing.nativeConfig.packageClassList.slice(1)
+
+  assert.throws(
+    () =>
+      validateNativePluginOwnership(
+        missing.manifest,
+        missing.packageJson,
+        missing.podfile,
+        missing.nativeConfig,
+      ),
+    /package|contract/i,
+  )
+})
+
+test('native plugin validation rejects a dependency version that drifts from the iOS contract', () => {
+  const fixture = validIosPluginFixture()
+  fixture.packageJson.dependencies['@capacitor-community/sqlite'] = '7.0.4'
+
+  assert.throws(
+    () =>
+      validateNativePluginOwnership(
+        fixture.manifest,
+        fixture.packageJson,
+        fixture.podfile,
+        fixture.nativeConfig,
+      ),
+    /version|7\.0\.3/i,
+  )
+})
+
+test('native plugin validation does not accept a commented-out pseudo Pod declaration', () => {
+  const fixture = validIosPluginFixture()
+  fixture.podfile = fixture.podfile.replace(
+    "pod 'CapacitorCommunitySqlite', :path => '../../node_modules/@capacitor-community/sqlite'",
+    "# pod 'CapacitorCommunitySqlite', :path => '../../node_modules/@capacitor-community/sqlite'",
+  )
+
+  assert.throws(
+    () =>
+      validateNativePluginOwnership(
+        fixture.manifest,
+        fixture.packageJson,
+        fixture.podfile,
+        fixture.nativeConfig,
+      ),
+    /Podfile|Pod declaration/i,
+  )
+})
+
+test('native plugin validation rejects a Pod path that resolves outside the wrapper', () => {
+  const fixture = validIosPluginFixture()
+  const wrapperRoot = join(tmpdir(), 'kod-ios-wrapper-contract')
+  const podfilePath = join(wrapperRoot, 'ios', 'App', 'Podfile')
+  fixture.podfile = fixture.podfile.replace(
+    '../../node_modules/@capacitor-community/sqlite',
+    '../../../canonical/node_modules/@capacitor-community/sqlite',
+  )
+
+  assert.throws(
+    () =>
+      validateNativePluginOwnership(
+        fixture.manifest,
+        fixture.packageJson,
+        fixture.podfile,
+        fixture.nativeConfig,
+        { wrapperRoot, podfilePath },
+      ),
+    /outside|wrapper|path/i,
+  )
+})
+
+test('native plugin validation requires exactly four real custom Swift registrations', () => {
+  const fixture = validIosPluginFixture()
+  const wrapperRoot = join(tmpdir(), 'kod-ios-wrapper-custom-plugin-contract')
+  fixture.bridgeSource = fixture.bridgeSource.replace(
+    'bridge?.registerPluginInstance(StoreKitPlugin())',
+    '// bridge?.registerPluginInstance(StoreKitPlugin())',
+  )
+
+  assert.throws(
+    () =>
+      validateNativePluginOwnership(
+        fixture.manifest,
+        fixture.packageJson,
+        fixture.podfile,
+        fixture.nativeConfig,
+        {
+          wrapperRoot,
+          podfilePath: join(wrapperRoot, 'ios', 'App', 'Podfile'),
+          bridgeSource: fixture.bridgeSource,
+        },
+      ),
+    /custom Swift|StoreKitPlugin|registration/i,
   )
 })

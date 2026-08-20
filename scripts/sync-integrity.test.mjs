@@ -191,6 +191,18 @@ test('install, build, and Capacitor child fixtures never inherit upstream auth v
   }
 })
 
+test('auth environment scrubbing follows Windows case-insensitive variable-name semantics', () => {
+  const clean = scrubNonGitEnvironment({
+    PATH: 'safe',
+    KoD_UpStReAm_ReAd_ToKeN: 'mixed-case-secret',
+    gIt_CoNfIg_CoUnT: '1',
+    Git_Config_Key_0: 'http.attacker.invalid.extraheader',
+    git_config_value_0: 'PRIVATE-TOKEN: mixed-case-secret',
+  })
+
+  assert.deepEqual(clean, { PATH: 'safe' })
+})
+
 test('Git authentication environment is available only to clone and fetch operations', () => {
   assert.equal(
     typeof syncUpstream.gitEnvironmentForOperation,
@@ -224,7 +236,7 @@ test('Git authentication environment is available only to clone and fetch operat
   }
 })
 
-test('checkout hooks cannot read an upstream token or injected Git config', async () => {
+test('checkout hooks cannot read mixed-case upstream auth variables under Windows semantics', async () => {
   assert.equal(typeof syncUpstream.runGit, 'function', 'sync-upstream must route Git through one scrubbed runner')
   const repository = await mkdtemp(join(tmpdir(), 'kod-ios-git-hook-'))
   const cleanEnvironment = scrubNonGitEnvironment(process.env)
@@ -241,7 +253,7 @@ test('checkout hooks cannot read an upstream token or injected Git config', asyn
       hookPath,
       [
         '#!/bin/sh',
-        'printf \'%s|%s|%s|%s\' "$KOD_UPSTREAM_READ_TOKEN" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_VALUE_0" > checkout-hook-env.txt',
+        'printf \'%s|%s|%s|%s\' "$KoD_UpStReAm_ReAd_ToKeN" "$gIt_CoNfIg_CoUnT" "$Git_Config_Key_0" "$git_config_value_0" > checkout-hook-env.txt',
       ].join('\n'),
     )
     await chmod(hookPath, 0o755)
@@ -249,10 +261,10 @@ test('checkout hooks cannot read an upstream token or injected Git config', asyn
     syncUpstream.runGit(['checkout', '--detach', 'HEAD'], repository, {
       baseEnvironment: {
         ...process.env,
-        KOD_UPSTREAM_READ_TOKEN: 'checkout-must-not-see-this',
-        GIT_CONFIG_COUNT: '1',
-        GIT_CONFIG_KEY_0: 'http.attacker.invalid.extraheader',
-        GIT_CONFIG_VALUE_0: 'PRIVATE-TOKEN: checkout-must-not-see-this',
+        KoD_UpStReAm_ReAd_ToKeN: 'checkout-must-not-see-this',
+        gIt_CoNfIg_CoUnT: '1',
+        Git_Config_Key_0: 'http.attacker.invalid.extraheader',
+        git_config_value_0: 'PRIVATE-TOKEN: checkout-must-not-see-this',
       },
     })
 

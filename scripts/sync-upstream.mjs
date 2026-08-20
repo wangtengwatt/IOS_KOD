@@ -358,7 +358,7 @@ export function gitEnvironmentForOperation(operation, baseEnvironment = process.
 export function scrubNonGitEnvironment(baseEnvironment) {
   return Object.fromEntries(
     Object.entries(baseEnvironment).filter(
-      ([key]) => key !== 'KOD_UPSTREAM_READ_TOKEN' && !key.startsWith('GIT_CONFIG_'),
+      ([key]) => key.toUpperCase() !== 'KOD_UPSTREAM_READ_TOKEN' && !key.toUpperCase().startsWith('GIT_CONFIG_'),
     ),
   )
 }

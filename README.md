@@ -37,9 +37,10 @@ $env:CHATBOX_BUILD_PLATFORM='ios'
 pnpm exec electron-vite dev
 ```
 
-Open `http://127.0.0.1:1212/ios-preview.html`. The same file is emitted into the
-canonical iOS bundle and therefore into this wrapper's ignored
-`www/ios-preview.html` after `pnpm sync:ios`.
+Open `http://127.0.0.1:1212/ios-preview.html`. This device frame is served only
+by the development command. Production mobile bundle manifests reject
+`ios-preview.html`, so `pnpm sync:ios` explicitly excludes it from the wrapper's
+ignored `www/` output.
 
 ## Release boundary
 

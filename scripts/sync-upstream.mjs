@@ -73,16 +73,90 @@ export const IOS_CUSTOM_SWIFT_PLUGIN_CLASSES = Object.freeze([
   'NotificationPlugin',
 ])
 
+const IOS_POD_CONTRACT = Object.freeze([
+  Object.freeze({ podName: 'Capacitor', packageName: '@capacitor/ios' }),
+  Object.freeze({ podName: 'CapacitorCordova', packageName: '@capacitor/ios' }),
+  ...IOS_PLUGIN_CONTRACT.map(({ podName, packageName }) => Object.freeze({ podName, packageName })),
+])
+
 function parsePodDeclarations(podfile) {
   if (typeof podfile !== 'string') throw new Error('Podfile must be text')
   const declarations = new Map()
   for (const line of podfile.split(/\r?\n/)) {
     const match = line.match(/^\s*pod\s+(['"])([^'"]+)\1\s*,\s*:path\s*=>\s*(['"])([^'"]+)\3\s*(?:#.*)?$/)
-    if (!match) continue
+    if (!match) {
+      if (/^\s*pod\b/.test(line)) {
+        throw new Error('Podfile contains an unsupported active Pod declaration; every Pod must use a local :path')
+      }
+      continue
+    }
     const [, , podName, , path] = match
     if (declarations.has(podName)) throw new Error(`Podfile has a duplicate Pod declaration: ${podName}`)
     declarations.set(podName, path)
   }
+  return declarations
+}
+
+function sameFilesystemPath(left, right) {
+  const resolvedLeft = resolve(left)
+  const resolvedRight = resolve(right)
+  return process.platform === 'win32'
+    ? resolvedLeft.toLowerCase() === resolvedRight.toLowerCase()
+    : resolvedLeft === resolvedRight
+}
+
+function isWithinDirectory(root, candidate) {
+  const pathFromRoot = relative(resolve(root), resolve(candidate))
+  return pathFromRoot === '' || (!pathFromRoot.startsWith('..') && !isAbsolute(pathFromRoot))
+}
+
+export function validatePodfilePortability(podfile, ownershipOptions = {}) {
+  const options = requireObject(ownershipOptions, 'Podfile ownership options')
+  const contractWrapperRoot = resolve(options.wrapperRoot || wrapperRoot)
+  const podfilePath = resolve(options.podfilePath || resolve(contractWrapperRoot, 'ios', 'App', 'Podfile'))
+  if (!isWithinDirectory(contractWrapperRoot, podfilePath)) {
+    throw new Error('Podfile path must stay inside the iOS wrapper')
+  }
+
+  const declarations = parsePodDeclarations(podfile)
+  const expectedPodNames = new Set(IOS_POD_CONTRACT.map(({ podName }) => podName))
+  for (const podName of declarations.keys()) {
+    if (!expectedPodNames.has(podName)) throw new Error(`Podfile contains an unexpected Pod declaration: ${podName}`)
+  }
+  if (declarations.size !== IOS_POD_CONTRACT.length) {
+    throw new Error('Podfile declarations must exactly match the iOS wrapper Pod contract')
+  }
+  for (const [podName, podPath] of declarations) {
+    const declaredPodPath = resolve(dirname(podfilePath), podPath)
+    if (!isWithinDirectory(contractWrapperRoot, declaredPodPath)) {
+      throw new Error(`Podfile path resolves outside the iOS wrapper: ${podName}`)
+    }
+  }
+  for (const { podName, packageName } of IOS_POD_CONTRACT) {
+    const podPath = declarations.get(podName)
+    const expectedPodPath = resolve(contractWrapperRoot, 'node_modules', packageName)
+    if (typeof podPath !== 'string' || !sameFilesystemPath(resolve(dirname(podfilePath), podPath), expectedPodPath)) {
+      throw new Error(`Podfile ${podName} path must resolve to wrapper node_modules/${packageName}`)
+    }
+  }
+
+  const helperPaths = []
+  for (const line of podfile.split(/\r?\n/)) {
+    const match = line.match(/^\s*require_relative\s+(['"])([^'"]+)\1\s*(?:#.*)?$/)
+    if (match) {
+      helperPaths.push(match[2])
+    } else if (/^\s*require_relative\b/.test(line)) {
+      throw new Error('Podfile contains an unsupported active require_relative declaration')
+    }
+  }
+  const expectedHelper = resolve(contractWrapperRoot, 'node_modules', '@capacitor', 'ios', 'scripts', 'pods_helpers')
+  if (
+    helperPaths.length !== 1 ||
+    !sameFilesystemPath(resolve(dirname(podfilePath), helperPaths[0]), expectedHelper)
+  ) {
+    throw new Error('Podfile must have exactly one require_relative for wrapper node_modules/@capacitor/ios/pods_helpers')
+  }
+
   return declarations
 }
 
@@ -159,6 +233,9 @@ export function validateManifest(lockValue, value) {
     ) {
       throw new Error('manifest file path must be a non-empty relative POSIX path')
     }
+    if (file.path.split('/').at(-1) === 'ios-preview.html') {
+      throw new Error('manifest must not contain the development-only ios-preview.html device frame')
+    }
     if (previousPath !== null && file.path <= previousPath) {
       throw new Error('manifest file paths must be unique and sorted in ordinal order')
     }
@@ -189,10 +266,6 @@ export function validateNativePluginOwnership(
   const options = requireObject(ownershipOptions, 'native plugin ownership options')
   const contractWrapperRoot = resolve(options.wrapperRoot || wrapperRoot)
   const podfilePath = resolve(options.podfilePath || resolve(contractWrapperRoot, 'ios', 'App', 'Podfile'))
-  const podfileRelativePath = relative(contractWrapperRoot, podfilePath)
-  if (podfileRelativePath.startsWith('..') || isAbsolute(podfileRelativePath)) {
-    throw new Error('Podfile path must stay inside the iOS wrapper')
-  }
   const expectedPackages = IOS_PLUGIN_CONTRACT.map((plugin) => plugin.packageName)
   if (
     !Array.isArray(manifest.nativePlugins) ||
@@ -204,7 +277,7 @@ export function validateNativePluginOwnership(
   if (!Array.isArray(nativeConfig.packageClassList)) {
     throw new Error('generated native registration list is missing')
   }
-  const podDeclarations = parsePodDeclarations(podfile)
+  const podDeclarations = validatePodfilePortability(podfile, { wrapperRoot: contractWrapperRoot, podfilePath })
   for (const plugin of manifest.nativePlugins) {
     if (typeof dependencies[plugin] !== 'string' || !dependencies[plugin]) {
       throw new Error(`wrapper is missing canonical native plugin dependency: ${plugin}`)

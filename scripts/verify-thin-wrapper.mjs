@@ -3,9 +3,13 @@ import { dirname, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
-import { validateLock } from './sync-upstream.mjs'
+import { validateLock, validatePodfilePortability } from './sync-upstream.mjs'
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const rootArgumentIndex = process.argv.indexOf('--root')
+const root =
+  rootArgumentIndex === -1
+    ? resolve(dirname(fileURLToPath(import.meta.url)), '..')
+    : resolve(process.argv[rootArgumentIndex + 1] || '')
 const failures = []
 
 for (const forbidden of [
@@ -42,6 +46,13 @@ try {
   if (importers.length !== 1 || importers[0] !== '.') failures.push('pnpm-lock.yaml must contain only importer .')
 } catch (error) {
   failures.push(`unable to validate pnpm-lock.yaml: ${error instanceof Error ? error.message : String(error)}`)
+}
+
+try {
+  const podfilePath = resolve(root, 'ios', 'App', 'Podfile')
+  validatePodfilePortability(readFileSync(podfilePath, 'utf8'), { wrapperRoot: root, podfilePath })
+} catch (error) {
+  failures.push(`invalid tracked Podfile: ${error instanceof Error ? error.message : String(error)}`)
 }
 
 if (failures.length) {

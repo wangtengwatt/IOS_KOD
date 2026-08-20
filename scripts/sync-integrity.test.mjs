@@ -13,6 +13,7 @@ import {
   scrubNonGitEnvironment,
   recoverWebRootBackup,
   validateNativePluginOwnership,
+  validatePodfilePortability,
   validateManifest,
   verifyBundleTree,
 } from './sync-upstream.mjs'
@@ -59,9 +60,14 @@ const validIosPluginFixture = () => ({
   packageJson: {
     dependencies: Object.fromEntries(iosPluginContract.map(([packageName, version]) => [packageName, version])),
   },
-  podfile: iosPluginContract
-    .map(([packageName, , podName]) => `pod '${podName}', :path => '../../node_modules/${packageName}'`)
-    .join('\n'),
+  podfile: [
+    "require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'",
+    "pod 'Capacitor', :path => '../../node_modules/@capacitor/ios'",
+    "pod 'CapacitorCordova', :path => '../../node_modules/@capacitor/ios'",
+    ...iosPluginContract.map(
+      ([packageName, , podName]) => `pod '${podName}', :path => '../../node_modules/${packageName}'`,
+    ),
+  ].join('\n'),
   nativeConfig: { packageClassList: iosPluginContract.map(([, , , className]) => className) },
   bridgeSource: [
     'bridge?.registerPluginInstance(KaiIdentityPlugin())',
@@ -80,6 +86,12 @@ test('manifest rejects traversal, absolute, backslash, duplicate, and unsorted p
   assert.throws(() => validateManifest(lock, manifestFor(duplicate)), /sorted|duplicate/i)
   const unsorted = [file('z.js', 'z'), file('a.js', 'a')]
   assert.throws(() => validateManifest(lock, manifestFor(unsorted)), /sorted/i)
+})
+
+test('iOS production manifest rejects the development-only device-frame preview', () => {
+  const files = [file('ios-preview.html', '<html>development preview</html>')]
+
+  assert.throws(() => validateManifest(lock, manifestFor(files)), /ios-preview|development-only/i)
 })
 
 test('bundle verification rejects tampered, extra, and missing files', async () => {
@@ -370,6 +382,54 @@ test('native plugin validation rejects a Pod path that resolves outside the wrap
         { wrapperRoot, podfilePath },
       ),
     /outside|wrapper|path/i,
+  )
+})
+
+test('Podfile portability rejects an undeclared Pod even when its path stays inside the wrapper', () => {
+  const fixture = validIosPluginFixture()
+  const wrapperRoot = join(tmpdir(), 'kod-ios-wrapper-exact-pod-contract')
+  const podfilePath = join(wrapperRoot, 'ios', 'App', 'Podfile')
+  fixture.podfile += "\npod 'UnexpectedPod', :path => '../../node_modules/unexpected-pod'"
+
+  assert.throws(
+    () => validatePodfilePortability(fixture.podfile, { wrapperRoot, podfilePath }),
+    /UnexpectedPod|unexpected|exact/i,
+  )
+})
+
+test('Podfile portability rejects an active Pod declaration that bypasses the local-path contract', () => {
+  const fixture = validIosPluginFixture()
+  const wrapperRoot = join(tmpdir(), 'kod-ios-wrapper-local-pod-contract')
+  const podfilePath = join(wrapperRoot, 'ios', 'App', 'Podfile')
+  fixture.podfile += "\npod 'RemotePod', :git => 'https://example.invalid/remote.git'"
+
+  assert.throws(
+    () => validatePodfilePortability(fixture.podfile, { wrapperRoot, podfilePath }),
+    /RemotePod|unsupported|local-path/i,
+  )
+})
+
+test('Podfile portability rejects an additional helper import outside the wrapper', () => {
+  const fixture = validIosPluginFixture()
+  const wrapperRoot = join(tmpdir(), 'kod-ios-wrapper-helper-contract')
+  const podfilePath = join(wrapperRoot, 'ios', 'App', 'Podfile')
+  fixture.podfile = `require_relative '../../../canonical/unsafe-helper'\n${fixture.podfile}`
+
+  assert.throws(
+    () => validatePodfilePortability(fixture.podfile, { wrapperRoot, podfilePath }),
+    /require_relative|helper|outside/i,
+  )
+})
+
+test('Podfile portability rejects a dynamic helper import that bypasses path validation', () => {
+  const fixture = validIosPluginFixture()
+  const wrapperRoot = join(tmpdir(), 'kod-ios-wrapper-dynamic-helper-contract')
+  const podfilePath = join(wrapperRoot, 'ios', 'App', 'Podfile')
+  fixture.podfile = `require_relative File.join('..', '..', '..', 'canonical', 'unsafe-helper')\n${fixture.podfile}`
+
+  assert.throws(
+    () => validatePodfilePortability(fixture.podfile, { wrapperRoot, podfilePath }),
+    /require_relative|unsupported|helper/i,
   )
 })
 

@@ -10,50 +10,50 @@ importers:
     dependencies:
       '@capacitor-community/sqlite':
         specifier: 7.0.3
-        version: 7.0.3(@capacitor/core@7.4.5)
+        version: 7.0.3(@capacitor/core@7.6.8)
       '@capacitor/app':
         specifier: 7.1.2
-        version: 7.1.2(@capacitor/core@7.4.5)
+        version: 7.1.2(@capacitor/core@7.6.8)
       '@capacitor/app-launcher':
         specifier: 7.0.4
-        version: 7.0.4(@capacitor/core@7.4.5)
+        version: 7.0.4(@capacitor/core@7.6.8)
       '@capacitor/browser':
         specifier: 7.0.5
-        version: 7.0.5(@capacitor/core@7.4.5)
+        version: 7.0.5(@capacitor/core@7.6.8)
       '@capacitor/core':
-        specifier: 7.4.5
-        version: 7.4.5
+        specifier: 7.6.8
+        version: 7.6.8
       '@capacitor/device':
         specifier: 7.0.5
-        version: 7.0.5(@capacitor/core@7.4.5)
+        version: 7.0.5(@capacitor/core@7.6.8)
       '@capacitor/filesystem':
         specifier: 7.1.6
-        version: 7.1.6(@capacitor/core@7.4.5)
+        version: 7.1.6(@capacitor/core@7.6.8)
       '@capacitor/keyboard':
         specifier: 7.0.6
-        version: 7.0.6(@capacitor/core@7.4.5)
+        version: 7.0.6(@capacitor/core@7.6.8)
       '@capacitor/share':
         specifier: 7.0.4
-        version: 7.0.4(@capacitor/core@7.4.5)
+        version: 7.0.4(@capacitor/core@7.6.8)
       '@capacitor/splash-screen':
         specifier: 7.0.5
-        version: 7.0.5(@capacitor/core@7.4.5)
+        version: 7.0.5(@capacitor/core@7.6.8)
       '@capacitor/toast':
         specifier: 7.0.4
-        version: 7.0.4(@capacitor/core@7.4.5)
+        version: 7.0.4(@capacitor/core@7.6.8)
       capacitor-plugin-safe-area:
         specifier: 4.0.3
-        version: 4.0.3(@capacitor/core@7.4.5)
+        version: 4.0.3(@capacitor/core@7.6.8)
       capacitor-stream-http:
         specifier: 0.1.0
-        version: 0.1.0(@capacitor/core@7.4.5)
+        version: 0.1.0(@capacitor/core@7.6.8)
     devDependencies:
       '@capacitor/cli':
         specifier: 7.4.5
         version: 7.4.5
       '@capacitor/ios':
         specifier: 7.4.5
-        version: 7.4.5(@capacitor/core@7.4.5)
+        version: 7.4.5(@capacitor/core@7.6.8)
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
@@ -86,8 +86,8 @@ packages:
     engines: {node: '>=20.0.0'}
     hasBin: true
 
-  '@capacitor/core@7.4.5':
-    resolution: {integrity: sha512-JnUywi0WRbqm4QYoplNsMQ7KAVuyrQFha0dOH9YDVCyrVHUvPcvrnK+9j5elUMgy+pOh3ve+pk6BVoySr91c+A==}
+  '@capacitor/core@7.6.8':
+    resolution: {integrity: sha512-x1xfxvNcTSnj6OoYaAB0n0a0HRvi5f2YjcVnMLxpMhbHDgGDAzzN9z8cnPCYV+SKTvqGF1hezHm82Op32XaAGg==}
 
   '@capacitor/device@7.0.5':
     resolution: {integrity: sha512-tf6BYeQMBARNLKELQq2RGsvG3z03oM/ga+aqVhvE8M4IM8+h/516eeSz07Eqm4+yySGaQFT+2rIkpJrvA7gaAA==}
@@ -220,6 +220,7 @@ packages:
   '@xmldom/xmldom@0.9.11':
     resolution: {integrity: sha512-tW8bcK3hsG0/uqSnNz6TK4BkcuZSezoU7DlnYssILmZDktPnSHHuDJJFM0AJv+13gz2r0iGdrj6qqKeUnxXEDg==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   ansi-regex@5.0.1:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}
@@ -599,22 +600,22 @@ packages:
 
 snapshots:
 
-  '@capacitor-community/sqlite@7.0.3(@capacitor/core@7.4.5)':
+  '@capacitor-community/sqlite@7.0.3(@capacitor/core@7.6.8)':
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
       jeep-sqlite: 2.8.0
 
-  '@capacitor/app-launcher@7.0.4(@capacitor/core@7.4.5)':
+  '@capacitor/app-launcher@7.0.4(@capacitor/core@7.6.8)':
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
 
-  '@capacitor/app@7.1.2(@capacitor/core@7.4.5)':
+  '@capacitor/app@7.1.2(@capacitor/core@7.6.8)':
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
 
-  '@capacitor/browser@7.0.5(@capacitor/core@7.4.5)':
+  '@capacitor/browser@7.0.5(@capacitor/core@7.6.8)':
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
 
   '@capacitor/cli@7.4.5':
     dependencies:
@@ -638,40 +639,40 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@capacitor/core@7.4.5':
+  '@capacitor/core@7.6.8':
     dependencies:
       tslib: 2.8.1
 
-  '@capacitor/device@7.0.5(@capacitor/core@7.4.5)':
+  '@capacitor/device@7.0.5(@capacitor/core@7.6.8)':
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
 
-  '@capacitor/filesystem@7.1.6(@capacitor/core@7.4.5)':
+  '@capacitor/filesystem@7.1.6(@capacitor/core@7.6.8)':
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
       '@capacitor/synapse': 1.0.4
 
-  '@capacitor/ios@7.4.5(@capacitor/core@7.4.5)':
+  '@capacitor/ios@7.4.5(@capacitor/core@7.6.8)':
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
 
-  '@capacitor/keyboard@7.0.6(@capacitor/core@7.4.5)':
+  '@capacitor/keyboard@7.0.6(@capacitor/core@7.6.8)':
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
 
-  '@capacitor/share@7.0.4(@capacitor/core@7.4.5)':
+  '@capacitor/share@7.0.4(@capacitor/core@7.6.8)':
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
 
-  '@capacitor/splash-screen@7.0.5(@capacitor/core@7.4.5)':
+  '@capacitor/splash-screen@7.0.5(@capacitor/core@7.6.8)':
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
 
   '@capacitor/synapse@1.0.4': {}
 
-  '@capacitor/toast@7.0.4(@capacitor/core@7.4.5)':
+  '@capacitor/toast@7.0.4(@capacitor/core@7.6.8)':
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
 
   '@ionic/cli-framework-output@2.2.8':
     dependencies:
@@ -824,13 +825,13 @@ snapshots:
 
   buffer-crc32@0.2.13: {}
 
-  capacitor-plugin-safe-area@4.0.3(@capacitor/core@7.4.5):
+  capacitor-plugin-safe-area@4.0.3(@capacitor/core@7.6.8):
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
 
-  capacitor-stream-http@0.1.0(@capacitor/core@7.4.5):
+  capacitor-stream-http@0.1.0(@capacitor/core@7.6.8):
     dependencies:
-      '@capacitor/core': 7.4.5
+      '@capacitor/core': 7.6.8
 
   chownr@2.0.0: {}
 

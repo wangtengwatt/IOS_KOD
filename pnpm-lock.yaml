@@ -45,8 +45,8 @@ importers:
         specifier: 4.0.3
         version: 4.0.3(@capacitor/core@7.4.5)
       capacitor-stream-http:
-        specifier: 0.1.0
-        version: 0.1.0(@capacitor/core@7.4.5)
+        specifier: 0.1.1
+        version: 0.1.1(@capacitor/core@7.4.5)
     devDependencies:
       '@capacitor/cli':
         specifier: 7.4.5
@@ -220,6 +220,7 @@ packages:
   '@xmldom/xmldom@0.9.11':
     resolution: {integrity: sha512-tW8bcK3hsG0/uqSnNz6TK4BkcuZSezoU7DlnYssILmZDktPnSHHuDJJFM0AJv+13gz2r0iGdrj6qqKeUnxXEDg==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   ansi-regex@5.0.1:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}
@@ -267,8 +268,8 @@ packages:
     peerDependencies:
       '@capacitor/core': '>=7.0.0'
 
-  capacitor-stream-http@0.1.0:
-    resolution: {integrity: sha512-BPRI9ZZlynE0pVGyxuCbkOLjPIDXvvDQmDCK+ahw1FmknGyRkkIZRMDE4hDSi5WRLJ137ZJgA1LAdgap2GWNEw==}
+  capacitor-stream-http@0.1.1:
+    resolution: {integrity: sha512-dMdgjAa+sIoRbcqVikomRz2DaQFoOILtKZuhyrAdYdpzEHBNnZvjJL6i5PpALYBSreTd4tc0h/4kec79zYRjhQ==}
     peerDependencies:
       '@capacitor/core': ^7.0.0
 
@@ -828,7 +829,7 @@ snapshots:
     dependencies:
       '@capacitor/core': 7.4.5
 
-  capacitor-stream-http@0.1.0(@capacitor/core@7.4.5):
+  capacitor-stream-http@0.1.1(@capacitor/core@7.4.5):
     dependencies:
       '@capacitor/core': 7.4.5
 

@@ -26,7 +26,7 @@
     "@capacitor/splash-screen": "7.0.5",
     "@capacitor/toast": "7.0.4",
     "capacitor-plugin-safe-area": "4.0.3",
-    "capacitor-stream-http": "0.1.0"
+    "capacitor-stream-http": "0.1.1"
   },
   "devDependencies": {
     "@capacitor/cli": "7.4.5",
